@@ -46,6 +46,19 @@ in
     # Turn on nvpmodel if we have a config for it.
     services.nvpmodel.enable = mkDefault true;
 
+    # Orin Nano: fbp_pg_mask is not writable on some kernels (ENODEV); official p3767
+    # nvpmodel configs reference FBP_POWER_GATING and make nvpmodel.service fail. Use a
+    # generated conf with those lines removed unless the user sets configFile explicitly
+    # (mkDefault loses to an explicit definition).
+    services.nvpmodel.configFile = mkIf (cfg.som == "orin-nano") (
+      mkDefault "${(
+        if cfg.super then
+          pkgs.nvidia-jetpack.nvpmodel-without-fbp-conf
+        else
+          pkgs.nvidia-jetpack.nvpmodel-without-fbp-conf.override { confName = "nvpmodel_p3767_0003.conf"; }
+      )}/nvpmodel.conf"
+    );
+
     # Set fan control service if we have a config for it
     services.nvfancontrol.configFile = mkIf (nvfancontrolConf ? "${cfg.som}") (mkDefault nvfancontrolConf.${cfg.som});
     # Enable the fan control service if it's a devkit

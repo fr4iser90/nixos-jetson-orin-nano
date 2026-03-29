@@ -180,4 +180,10 @@ makeScope final.newScope (self: {
   # Instead, we must either use final.callPackages or packagesFromDirectoryRecursive.
   // final.callPackages ./pkgs/l4t {
   inherit self l4tAtLeast l4tOlder;
-})
+}
+  // {
+    # Cannot live under pkgs/l4t/: packagesFromDirectoryRecursive does not allow sibling deps (e.g. l4t-nvpmodel).
+    nvpmodel-without-fbp-conf = final.callPackage ./pkgs/nvpmodel-without-fbp-conf.nix {
+      l4t-nvpmodel = self.l4t-nvpmodel;
+    };
+  })

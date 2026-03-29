@@ -31,7 +31,10 @@ let
 
       # If there are no files that match the compat node use the default nvpower.sh uses
       if [ ! -f ${pkgs.nvidia-jetpack.l4t-nvpmodel}/etc/nvpmodel/nvpmodel_"$device_som".conf ]; then
-        if [[ "$device_som" == 'p3767_0005' ]]; then
+        if [[ "$device_som" == 'p3767_0005_super' ]]; then
+          # Orin Nano Super: BSP has no nvpmodel_p3767_0005_super.conf; use the 0003_super board file.
+          device_som="p3767_0003_super"
+        elif [[ "$device_som" == 'p3767_0005' ]]; then
           # The nvpower script maps p3767_0005 -> p3767_0003 so doing the same here
           # looks to be difference between jp5 and jp6.
           device_som="p3767_0003"
@@ -57,7 +60,13 @@ in
       enable = mkEnableOption "NVPModel";
 
       configFile = mkOption {
-        description = "config file name from l4t-nvpmodel package to use";
+        description = ''
+          Path to an nvpmodel configuration file. When null, a file from
+          `pkgs.nvidia-jetpack.l4t-nvpmodel` is selected at runtime (see `setupConf`).
+          For boards where `fbp_pg_mask` is not writable, use
+          `''${pkgs.nvidia-jetpack.nvpmodel-without-fbp-conf}/nvpmodel.conf` or set
+          `hardware.nvidia-jetpack` defaults (e.g. Orin Nano uses a generated no-FBP conf).
+        '';
         default = null;
         type = types.nullOr types.path;
       };
