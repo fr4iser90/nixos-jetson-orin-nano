@@ -1,10 +1,9 @@
 # Agent layer + PostgreSQL. Netzwerk ai-net (wie examples/ollama/docker/compose.yaml).
 #
+# Variablen: docker/.env (von .env.example kopieren). Compose lädt .env automatisch.
+#
 # Start:
 #   docker compose up -d
-#
-# Passwort für Produktion überschreiben, z. B.:
-#   POSTGRES_PASSWORD=... DATABASE_URL=postgresql://agent:...@postgres:5432/agent docker compose up -d
 #
 # Open WebUI: OpenAI API URL → http://agent-layer:8080/v1 (im gleichen Docker-Netz)
 #   oder vom Host: http://HOST_IP:8088/v1
@@ -16,15 +15,15 @@ services:
     container_name: agent-layer-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: agent
-      POSTGRES_PASSWORD: agent
-      POSTGRES_DB: agent
+      POSTGRES_USER: ${POSTGRES_USER:-agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agent}
+      POSTGRES_DB: ${POSTGRES_DB:-agent}
     volumes:
       - agent_pg_data:/var/lib/postgresql/data
     networks:
       - ai-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agent -d agent"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 3s
       timeout: 5s
       retries: 15
@@ -41,20 +40,31 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8088:8080"
+      - "${AGENT_HTTP_PORT:-8088}:8080"
     environment:
-      - OLLAMA_BASE_URL=http://ollama:11434
-      - DATABASE_URL=postgresql://agent:agent@postgres:5432/agent
-      - AGENT_MAX_TOOL_ROUNDS=8
-      # Zusatz-Plugins (.py mit TOOLS + HANDLERS), siehe extra_plugins/sample_echo.py
-      # - AGENT_PLUGINS_EXTRA_DIR=/data/plugins
-      # Optional: nur gelistete SHA256 (sha256sum datei.py) für Extra-Plugins
-      # - AGENT_PLUGINS_ALLOWED_SHA256=abc123...,def456...
-      # Nemotron o. Ä. schreibt Tool-JSON manchmal nur in message content — Fallback (Standard an):
-      # - AGENT_CONTENT_TOOL_FALLBACK=false
-      # Optional:
-      # - AGENT_API_KEY=change-me
-      # - AGENT_SYSTEM_PROMPT=You are a helpful homelab assistant.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-agent}:${POSTGRES_PASSWORD:-agent}@postgres:5432/${POSTGRES_DB:-agent}}
+      AGENT_MAX_TOOL_ROUNDS: ${AGENT_MAX_TOOL_ROUNDS:-8}
+      AGENT_API_KEY: ${AGENT_API_KEY:-}
+      AGENT_SYSTEM_PROMPT: ${AGENT_SYSTEM_PROMPT:-}
+      AGENT_PLUGINS_EXTRA_DIR: ${AGENT_PLUGINS_EXTRA_DIR:-}
+      AGENT_PLUGINS_ALLOWED_SHA256: ${AGENT_PLUGINS_ALLOWED_SHA256:-}
+      AGENT_CONTENT_TOOL_FALLBACK: ${AGENT_CONTENT_TOOL_FALLBACK:-true}
+      AGENT_CORS_ORIGINS: ${AGENT_CORS_ORIGINS:-*}
+      AGENT_DISABLE_DDG_SEARCH: ${AGENT_DISABLE_DDG_SEARCH:-}
+      # deep_search ohne Tavily: Snippets + optional Seitenabruf (robots.txt)
+      AGENT_DISABLE_FETCH_DEEP: ${AGENT_DISABLE_FETCH_DEEP:-}
+      AGENT_ROBOTS_STRICT: ${AGENT_ROBOTS_STRICT:-}
+      AGENT_FETCH_USER_AGENT: ${AGENT_FETCH_USER_AGENT:-}
+      AGENT_FETCH_MAX_BYTES: ${AGENT_FETCH_MAX_BYTES:-}
+      AGENT_ROBOTS_CACHE_TTL: ${AGENT_ROBOTS_CACHE_TTL:-}
+      AGENT_FETCH_DOMAIN_ALLOWLIST: ${AGENT_FETCH_DOMAIN_ALLOWLIST:-}
+      AGENT_RESPECT_META_ROBOTS: ${AGENT_RESPECT_META_ROBOTS:-true}
+      # Künftige Tool-Plugins (nur wirksam wenn Code die Variablen liest)
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      SERPAPI_API_KEY: ${SERPAPI_API_KEY:-}
     # volumes:
     #   - ./extra_plugins:/data/plugins:ro
     networks:

@@ -1,0 +1,6 @@
+# Python cache
+__pycache__
+
+# Agent layer secrets (copy from examples/agent-layer/docker/.env.example)
+# Do not commit this file to the repository.
+docker/.env
