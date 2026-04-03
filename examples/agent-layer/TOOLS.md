@@ -10,9 +10,9 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 | Status | Tool | Plugin | Kurzbeschreibung |
 |--------|------|--------|------------------|
 | [x] | `get_current_time` | `clock` | IANA-Zeitzone, ISO-Zeit (ohne DB). |
-| [x] | `create_todo` | `todos` | Todo in Postgres anlegen. |
-| [x] | `list_todos` | `todos` | Todos listen (max. 100). |
-| [x] | `set_todo_status` | `todos` | Status `open` / `done` / `cancelled`. |
+| [x] | `create_todo` | `todos` | Todo anlegen (**pro** `X-Agent-User-Sub` + Tenant). |
+| [x] | `list_todos` | `todos` | Eigene Todos (max. 100). |
+| [x] | `set_todo_status` | `todos` | Status nur für eigene Zeilen. |
 | [x] | `search_web` | `web_search` | Tavily → Brave → **ddgs**-Metasuche ohne API-Key (inoffiziell). |
 | [x] | `deep_search` | `web_search` | Tavily: `raw_content`. Ohne: Snippets + **Seitenabruf** wenn `robots.txt` den UA erlaubt (`fetch_status`, `raw_content`). Abschalten: `AGENT_DISABLE_FETCH_DEEP=true`. |
 | [x] | `list_available_tools` | `meta` | Alle Tools mit Beschreibung + JSON-Schema (Parameter). |
@@ -24,6 +24,18 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 - Explizit abfragbar: **`list_available_tools`** (Übersicht), **`get_tool_help`** mit `tool_name` (ein Tool ausführlich + kurzer `how_to_use`-Hinweis).
 
 **Validiert (manuell / Stack):** Tool-Loop über Agent → Ollama, Einträge in `todos` + `tool_invocations`; Open WebUI mit OpenAI-Base-URL auf den Agent; `stream: true` über SSE-Shim; Tool-Merge mit WebUI-`tools`; Content-JSON-Fallback für Modelle mit `reasoning`-Feld.
+
+### Multi-User (Postgres)
+
+- Tabellen: **`tenants`**, **`users`** (`external_sub` pro Login, eindeutig je `tenant_id`); **`todos`** und **`tool_invocations`** haben **`tenant_id`** + **`user_id`**.
+- Pro Chat-Request setzt der Agent die Identität aus HTTP-Headern (dann `contextvars` für alle Tool-Handler):
+  - **User-Kennung** — Standard: zuerst **`X-OpenWebUI-User-Id`** (Open WebUI mit `ENABLE_FORWARD_USER_INFO_HEADERS`), sonst **`X-Agent-User-Sub`**. Reihenfolge/Namen: `AGENT_USER_SUB_HEADER` (kommagetrennt).
+  - **`X-Agent-Tenant-Id`** — numerische Tenant-ID (Default `1` = `default`-Tenant). Optional: `AGENT_TENANT_ID_HEADER`.
+  - Ohne Sub: `AGENT_DEFAULT_EXTERNAL_SUB` (Default `default`) → gemeinsamer DB-User wie früher.
+- **Open WebUI:** In den Connection-**Headers** (Admin) sind Werte meist **statisch** — ungeeignet für Trennung pro Account. **OAuth** = Login zur WebUI, nicht automatisch User-ID am Agent.
+- **Ohne Proxy:** Im Repo ist **`examples/open-webui/docker/compose.yaml`** mit **`ENABLE_FORWARD_USER_INFO_HEADERS=true`** vorkonfiguriert; der **agent-layer** nutzt standardmäßig **`X-OpenWebUI-User-Id`** (dann **`X-Agent-User-Sub`** als Fallback). `external_sub` = WebUI-User-ID (Header-Namen bei WebUI per `FORWARD_USER_INFO_HEADER_USER_ID` änderbar).
+- Alternativ: **Reverse-Proxy** setzt `X-Agent-User-Sub`, oder `AGENT_USER_SUB_HEADER` anpassen.
+- **Sicherheit:** Ohne `AGENT_API_KEY` kann jeder Client beliebige Subs vorgeben. Für geteilten Zugriff: API-Key + vertrauenswürdiger Proxy, der `X-Agent-User-Sub` setzt und von außen nicht überschreibbar macht.
 
 ---
 

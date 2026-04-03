@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from . import config
 from . import db
+from . import identity
 from .agent import chat_completion
 from .registry import get_registry, reload_registry
 
@@ -32,7 +33,7 @@ async def lifespan(_app: FastAPI):
     db.close_pool()
 
 
-app = FastAPI(title="agent-layer", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="agent-layer", version="0.5.0", lifespan=lifespan)
 
 _cors_origins = [
     o.strip() for o in os.environ.get("AGENT_CORS_ORIGINS", "*").split(",") if o.strip()
@@ -165,6 +166,23 @@ async def chat_completions(request: Request):
     work = dict(body)
     work["stream"] = False
 
+    external_sub = config.DEFAULT_EXTERNAL_SUB
+    for h in config.USER_SUB_HEADERS:
+        v = request.headers.get(h)
+        if v is not None and str(v).strip():
+            external_sub = str(v).strip()
+            break
+    raw_tenant = request.headers.get(config.TENANT_ID_HEADER)
+    try:
+        tenant_hdr = int(str(raw_tenant).strip()) if raw_tenant and str(raw_tenant).strip() else 1
+    except (TypeError, ValueError):
+        tenant_hdr = 1
+    if tenant_hdr < 1:
+        tenant_hdr = 1
+
+    user_id, tenant_id = db.ensure_user_external(external_sub, tenant_hdr)
+    id_token = identity.set_identity(tenant_id, user_id)
+
     try:
         result = await chat_completion(work)
     except ValueError as e:
@@ -172,6 +190,8 @@ async def chat_completions(request: Request):
     except Exception as e:
         logger.exception("chat completion failed")
         raise HTTPException(status_code=502, detail=str(e))
+    finally:
+        identity.reset_identity(id_token)
 
     if want_stream:
         return StreamingResponse(

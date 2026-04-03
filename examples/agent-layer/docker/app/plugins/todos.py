@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from .. import db
 
-__version__ = "1.0.0"
+__version__ = "1.1.1"
 PLUGIN_ID = "todos"
 
 
@@ -62,7 +62,11 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "create_todo",
-            "description": "Creates a todo item in the database.",
+            "description": (
+                "Creates a todo item for the current user "
+                "(Open WebUI: X-OpenWebUI-User-Id when forwarding is enabled; "
+                "else X-Agent-User-Sub; optional tenant X-Agent-Tenant-Id)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -76,7 +80,9 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_todos",
-            "description": "Lists todo items from the database (newest first, max 100).",
+            "description": (
+                "Lists this user's todos (newest first, max 100); scoped by Open WebUI user id or Sub header."
+            ),
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -84,7 +90,7 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "set_todo_status",
-            "description": "Updates a todo's status by id.",
+            "description": "Updates a todo's status by id (only if it belongs to the current user).",
             "parameters": {
                 "type": "object",
                 "properties": {

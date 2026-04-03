@@ -14,6 +14,7 @@ Open WebUI / curl  →  agent-layer:8080/v1  →  Ollama :11434
 - **Modellname** kommt pro Request vom Client (`model` im JSON), der Agent reicht ihn an Ollama durch.
 - **Websuche** funktioniert auch **ohne API-Key** (ddgs-Metasuche, inoffiziell); Keys für Tavily/Brave sind optional robuster — siehe [TOOLS.md](./TOOLS.md).
 - **Secrets:** siehe [`.env`](#konfiguration-env) — nicht ins Git committen.
+- **Mehrere Nutzer:** Todos pro WebUI-Account, wenn Open WebUI **`ENABLE_FORWARD_USER_INFO_HEADERS`** sendet (siehe `examples/open-webui/docker/compose.yaml`) und der Agent die Standard-Header-Kette nutzt — Details [TOOLS.md](./TOOLS.md#multi-user-postgres).
 
 ## Voraussetzungen
 
@@ -41,6 +42,7 @@ docker compose build && docker compose up -d
 1. **Connections → OpenAI API**: Base URL `http://agent-layer:8080/v1` (Container im Netz `ai-net`) bzw. vom Host `http://<host>:8088/v1`.
 2. **Ollama-URL** in der UI ist optional, wenn alle Modelllisten über den Agent laufen (`GET /v1/models` proxy zu Ollama).
 3. API-Key nur setzen, wenn du `AGENT_API_KEY` im Agent gesetzt hast — dann gleicher Wert als Bearer-Token.
+4. **Getrennte Todos pro WebUI-Login:** Open-WebUI-Stack mit **`ENABLE_FORWARD_USER_INFO_HEADERS=true`** starten (`examples/open-webui/docker/compose.yaml` ist so gesetzt). Der Agent liest standardmäßig **`X-OpenWebUI-User-Id`** (siehe [TOOLS.md](./TOOLS.md#multi-user-postgres)).
 
 ## Konfiguration (.env)
 

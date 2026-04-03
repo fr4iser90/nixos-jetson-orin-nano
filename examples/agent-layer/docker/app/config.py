@@ -25,6 +25,21 @@ PLUGINS_EXTRA_DIR = os.environ.get("AGENT_PLUGINS_EXTRA_DIR", "").strip()
 
 # Comma-separated SHA256 hex digests (64 chars). If set, each extra *.py must match one entry.
 # Read on each extra-plugin scan (reload) so container env updates take effect without code change.
+# Multi-tenant HTTP: stable user id per request (comma-separated header names; first non-empty wins).
+# Default fits Open WebUI with ENABLE_FORWARD_USER_INFO_HEADERS=true (X-OpenWebUI-User-Id).
+# Without AGENT_API_KEY, clients can spoof headers.
+def _user_sub_headers() -> list[str]:
+    raw = (os.environ.get("AGENT_USER_SUB_HEADER") or "").strip()
+    if raw:
+        return [x.strip() for x in raw.split(",") if x.strip()]
+    return ["X-OpenWebUI-User-Id", "X-Agent-User-Sub"]
+
+
+USER_SUB_HEADERS = _user_sub_headers()
+TENANT_ID_HEADER = (os.environ.get("AGENT_TENANT_ID_HEADER") or "X-Agent-Tenant-Id").strip()
+DEFAULT_EXTERNAL_SUB = (os.environ.get("AGENT_DEFAULT_EXTERNAL_SUB") or "default").strip() or "default"
+
+
 def plugins_allowed_sha256() -> frozenset[str] | None:
     raw = os.environ.get("AGENT_PLUGINS_ALLOWED_SHA256", "").strip()
     if not raw:

@@ -1,4 +1,7 @@
 # Open WebUI — chat UI for Ollama. Start the ollama stack first (same host, port 11434).
+#
+# ENABLE_FORWARD_USER_INFO_HEADERS: sends X-OpenWebUI-User-Id (etc.) to OpenAI-compatible
+# backends — used by examples/agent-layer for per-user todos (default header chain).
 services:
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
@@ -10,6 +13,7 @@ services:
       - open_webui_data:/app/backend/data
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
+      - ENABLE_FORWARD_USER_INFO_HEADERS=true
     networks:
       - ai-net
 
