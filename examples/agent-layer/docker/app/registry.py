@@ -1,15 +1,14 @@
-"""Discover, register, and reload tool plugins (built-in package + optional directory)."""
+"""Load tool plugins only from configured directories (``*.py`` files); no package hardcoding."""
 
 from __future__ import annotations
 
 import hashlib
-import importlib
 import importlib.util
 import json
 import logging
+import re
 import sys
 import threading
-import pkgutil
 from pathlib import Path
 from typing import Any, Callable
 
@@ -21,20 +20,55 @@ logger = logging.getLogger(__name__)
 Handler = Callable[[dict[str, Any]], str]
 
 
+def _openai_spec_tool_name(spec: Any) -> str | None:
+    if not isinstance(spec, dict):
+        return None
+    fn = spec.get("function")
+    if isinstance(fn, dict):
+        n = fn.get("name")
+        return str(n) if n else None
+    return None
+
+
+def _path_under_or_equal(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _iter_plugin_py_files(root: Path) -> list[Path]:
+    """All ``*.py`` under ``root`` (recursive), excluding ``__init__.py``, ``_*``, ``__pycache__``."""
+    out: list[Path] = []
+    for path in sorted(root.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        if path.name.startswith("_") or path.name == "__init__.py":
+            continue
+        out.append(path)
+    return out
+
+
+def _stable_module_slug(directory: Path, path: Path, dir_idx: int) -> str:
+    """Unique import-safe suffix for ``spec_from_file_location`` (avoids stem collisions across subdirs)."""
+    try:
+        rel = path.resolve().relative_to(directory.resolve())
+    except (ValueError, OSError):
+        rel = Path(path.name)
+    rel_no_suffix = rel.with_suffix("")
+    parts = [re.sub(r"[^a-zA-Z0-9_]", "_", str(p)) for p in rel_no_suffix.parts]
+    slug = "_".join(p for p in parts if p).strip("_") or "plugin"
+    if slug and slug[0].isdigit():
+        slug = f"m_{slug}"
+    return f"{dir_idx}_{slug}"
+
+
 class ToolRegistry:
-    """
-    Built-in plugins (``app.plugins``) and optional directory plugins are kept separate.
-    ``reload_extra_only`` refreshes only the directory layer; built-in modules stay loaded.
-    """
+    """Scans ``AGENT_PLUGIN_DIRS`` or default ``app/plugins`` + optional extra mount."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._builtin_handlers: dict[str, Handler] = {}
-        self._builtin_openai_tools: list[dict[str, Any]] = []
-        self._builtin_meta: list[dict[str, Any]] = []
-        self._extra_handlers: dict[str, Handler] = {}
-        self._extra_openai_tools: list[dict[str, Any]] = []
-        self._extra_meta: list[dict[str, Any]] = []
         self._handlers: dict[str, Handler] = {}
         self._openai_tools: list[dict[str, Any]] = []
         self._plugins_meta: list[dict[str, Any]] = []
@@ -42,115 +76,86 @@ class ToolRegistry:
     def load_all(self) -> None:
         with self._lock:
             self._clear_storage()
-            self._purge_builtin_plugin_modules()
-            self._purge_user_plugin_modules()
-            self._load_builtin_into_storage()
-            self._load_extra_into_storage()
-            self._merge()
+            self._purge_dynamic_plugin_modules()
+            acc_h: dict[str, Handler] = {}
+            acc_tools: list[dict[str, Any]] = []
+            acc_meta: list[dict[str, Any]] = []
 
-    def reload_extra_only(self) -> None:
-        with self._lock:
-            self._purge_user_plugin_modules()
-            self._extra_handlers.clear()
-            self._extra_openai_tools.clear()
-            self._extra_meta.clear()
-            self._load_extra_into_storage()
-            self._merge()
+            allow = config.plugins_allowed_sha256()
+            extra_raw = (config.PLUGINS_EXTRA_DIR or "").strip()
+            extra_root: Path | None = None
+            if extra_raw:
+                try:
+                    extra_root = Path(extra_raw).expanduser().resolve()
+                except OSError:
+                    extra_root = Path(extra_raw).expanduser()
+
+            dirs = config.plugin_scan_directories()
+            if not dirs:
+                logger.warning("no plugin directories to scan (set AGENT_PLUGIN_DIRS or ship app/plugins)")
+
+            for dir_idx, directory in enumerate(dirs):
+                if not directory.is_dir():
+                    logger.warning("skip missing plugin directory: %s", directory)
+                    continue
+                for path in _iter_plugin_py_files(directory):
+                    try:
+                        data = path.read_bytes()
+                    except OSError:
+                        logger.exception("cannot read plugin file %s", path)
+                        continue
+                    digest = hashlib.sha256(data).hexdigest()
+                    try:
+                        path_r = path.resolve()
+                    except OSError:
+                        path_r = path
+                    needs_sha = (
+                        allow is not None
+                        and extra_root is not None
+                        and extra_root.is_dir()
+                        and _path_under_or_equal(path_r, extra_root)
+                    )
+                    if needs_sha and digest not in allow:
+                        logger.error(
+                            "rejecting plugin (not in AGENT_PLUGINS_ALLOWED_SHA256): %s",
+                            path,
+                        )
+                        continue
+                    slug = _stable_module_slug(directory, path, dir_idx)
+                    mod_name = f"agent_plugin_{slug}"
+                    try:
+                        spec = importlib.util.spec_from_file_location(mod_name, path)
+                        if spec is None or spec.loader is None:
+                            logger.error("cannot load plugin spec: %s", path)
+                            continue
+                        mod = importlib.util.module_from_spec(spec)
+                        sys.modules[mod_name] = mod
+                        spec.loader.exec_module(mod)
+                    except Exception:
+                        logger.exception("failed to load plugin %s", path)
+                        continue
+                    self._register_module(
+                        mod,
+                        source=f"file:{path}",
+                        handlers=acc_h,
+                        tools=acc_tools,
+                        meta=acc_meta,
+                        file_sha256=digest,
+                    )
+
+            self._handlers = acc_h
+            self._openai_tools = acc_tools
+            self._plugins_meta = acc_meta
 
     def _clear_storage(self) -> None:
-        self._builtin_handlers.clear()
-        self._builtin_openai_tools.clear()
-        self._builtin_meta.clear()
-        self._extra_handlers.clear()
-        self._extra_openai_tools.clear()
-        self._extra_meta.clear()
         self._handlers.clear()
         self._openai_tools.clear()
         self._plugins_meta.clear()
 
-    def _purge_builtin_plugin_modules(self) -> None:
-        import app.plugins as plugins_pkg
-
-        root = plugins_pkg.__name__
-        prefix = root + "."
+    def _purge_dynamic_plugin_modules(self) -> None:
         for key in list(sys.modules):
-            if key.startswith(prefix) and key != root:
+            if key.startswith("agent_plugin_"):
                 del sys.modules[key]
-
-    def _purge_user_plugin_modules(self) -> None:
-        for key in list(sys.modules):
-            if key.startswith("agent_user_plugin_"):
-                del sys.modules[key]
-
-    def _load_builtin_into_storage(self) -> None:
-        import app.plugins as plugins_pkg
-
-        for _finder, name, ispkg in pkgutil.iter_modules(
-            plugins_pkg.__path__, plugins_pkg.__name__ + "."
-        ):
-            short = name.rsplit(".", 1)[-1]
-            if short.startswith("_"):
-                continue
-            if ispkg:
-                continue
-            try:
-                mod = importlib.import_module(name)
-            except Exception:
-                logger.exception("failed to import built-in plugin %s", name)
-                continue
-            self._register_module(
-                mod,
-                source=f"builtin:{name}",
-                handlers=self._builtin_handlers,
-                tools=self._builtin_openai_tools,
-                meta=self._builtin_meta,
-            )
-
-    def _load_extra_into_storage(self) -> None:
-        raw = (config.PLUGINS_EXTRA_DIR or "").strip()
-        if not raw:
-            return
-        root = Path(raw)
-        if not root.is_dir():
-            logger.warning("AGENT_PLUGINS_EXTRA_DIR is not a directory: %s", root)
-            return
-        allow = config.plugins_allowed_sha256()
-        for path in sorted(root.glob("*.py")):
-            if path.name.startswith("_"):
-                continue
-            try:
-                data = path.read_bytes()
-            except OSError:
-                logger.exception("cannot read plugin file %s", path)
-                continue
-            digest = hashlib.sha256(data).hexdigest()
-            if allow is not None and digest not in allow:
-                logger.error(
-                    "rejecting extra plugin %s: sha256 %s not in AGENT_PLUGINS_ALLOWED_SHA256",
-                    path,
-                    digest,
-                )
-                continue
-            mod_name = f"agent_user_plugin_{path.stem}"
-            try:
-                spec = importlib.util.spec_from_file_location(mod_name, path)
-                if spec is None or spec.loader is None:
-                    logger.error("cannot load plugin spec: %s", path)
-                    continue
-                mod = importlib.util.module_from_spec(spec)
-                sys.modules[mod_name] = mod
-                spec.loader.exec_module(mod)
-            except Exception:
-                logger.exception("failed to load extra plugin %s", path)
-                continue
-            self._register_module(
-                mod,
-                source=f"file:{path}",
-                handlers=self._extra_handlers,
-                tools=self._extra_openai_tools,
-                meta=self._extra_meta,
-                file_sha256=digest,
-            )
 
     def _register_module(
         self,
@@ -187,10 +192,20 @@ class ToolRegistry:
                 logger.warning("skip tool without name in %s", source)
                 continue
             if name in handlers or name in pending_handlers:
-                raise ValueError(f"duplicate tool name '{name}' while loading {source}")
+                logger.warning(
+                    "skip duplicate tool %r in %s (earlier plugin wins)",
+                    name,
+                    source,
+                )
+                continue
             handler = mod_handlers.get(name)
             if not callable(handler):
-                raise ValueError(f"tool '{name}' has no callable handler in {source}")
+                logger.error(
+                    "skip tool %r in %s: no callable handler in HANDLERS",
+                    name,
+                    source,
+                )
+                continue
             pending_handlers[name] = handler  # type: ignore[assignment]
             pending_specs.append(spec)
             tool_names.append(name)
@@ -226,18 +241,6 @@ class ToolRegistry:
         logger.info(
             "loaded plugin %s v%s (%d tools) [%s]", pid, ver, len(tool_names), source
         )
-
-    def _merge(self) -> None:
-        overlap = set(self._builtin_handlers) & set(self._extra_handlers)
-        if overlap:
-            raise ValueError(
-                f"extra plugins define tool names that already exist as built-ins: {sorted(overlap)}"
-            )
-        self._handlers = {**self._builtin_handlers, **self._extra_handlers}
-        self._openai_tools = list(self._builtin_openai_tools) + list(
-            self._extra_openai_tools
-        )
-        self._plugins_meta = list(self._builtin_meta) + list(self._extra_meta)
 
     @property
     def openai_tools(self) -> list[dict[str, Any]]:
@@ -281,22 +284,14 @@ def get_registry() -> ToolRegistry:
 
 
 def reload_registry(scope: str = "all") -> ToolRegistry:
+    """Full rescan of plugin directories. ``scope`` is kept for API compatibility only."""
     global _registry
     s = (scope or "all").strip().lower()
     if s not in ("all", "extra"):
         raise ValueError("scope must be 'all' or 'extra'")
 
     with _registry_lock:
-        if s == "extra":
-            if _registry is None:
-                reg = ToolRegistry()
-                reg.load_all()
-                _registry = reg
-                return reg
-            _registry.reload_extra_only()
-            return _registry
-
         candidate = ToolRegistry()
         candidate.load_all()
         _registry = candidate
-        return candidate
+        return _registry

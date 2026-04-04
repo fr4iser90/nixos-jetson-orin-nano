@@ -1,108 +1,17 @@
-"""Meta-tools: list all registered tools and show help for one tool."""
+"""Static help for user secrets (no OTP); use register_secrets tool for OTP + curl."""
 
 from __future__ import annotations
 
 import json
 from typing import Any, Callable
 
-from .. import config
-from .. import db
-from .. import identity
-from .. import secret_otp_bundle
-from ..registry import get_registry
+from app import config
+from app import db
+from app import identity
+from app import secret_otp_bundle
 
-__version__ = "1.5.2"
-PLUGIN_ID = "meta"
-
-
-def list_available_tools(arguments: dict[str, Any]) -> str:
-    """Return every tool name, description, and JSON Schema parameters (as registered)."""
-    _ = arguments
-    reg = get_registry()
-    tools_out: list[dict[str, Any]] = []
-    for spec in reg.openai_tools:
-        fn = spec.get("function") if isinstance(spec, dict) else None
-        if not isinstance(fn, dict):
-            continue
-        name = fn.get("name")
-        if not name:
-            continue
-        tools_out.append(
-            {
-                "name": name,
-                "description": fn.get("description") or "",
-                "parameters": fn.get("parameters") or {},
-            }
-        )
-    return json.dumps(
-        {
-            "ok": True,
-            "count": len(tools_out),
-            "tools": tools_out,
-            "hint": "Use get_tool_help with a tool name for one schema in full, or call a tool with JSON args per parameters.properties / required.",
-        },
-        ensure_ascii=False,
-    )
-
-
-def get_tool_help(arguments: dict[str, Any]) -> str:
-    """Return full description + parameter schema for a single tool."""
-    name = (arguments.get("tool_name") or "").strip()
-    if not name:
-        return json.dumps({"ok": False, "error": "tool_name is required"})
-    reg = get_registry()
-    for spec in reg.openai_tools:
-        fn = spec.get("function") if isinstance(spec, dict) else None
-        if not isinstance(fn, dict):
-            continue
-        if fn.get("name") != name:
-            continue
-        return json.dumps(
-            {
-                "ok": True,
-                "name": name,
-                "description": fn.get("description") or "",
-                "parameters": fn.get("parameters") or {},
-                "how_to_use": (
-                    "The model calls this tool with a JSON object matching "
-                    "`parameters.properties`; required keys are in `parameters.required`."
-                ),
-            },
-            ensure_ascii=False,
-        )
-    return json.dumps(
-        {
-            "ok": False,
-            "error": f"unknown tool: {name}",
-            "hint": "Call list_available_tools for valid names.",
-        },
-        ensure_ascii=False,
-    )
-
-
-def register_secrets(arguments: dict[str, Any]) -> str:
-    """
-    Mint a one-time code bound to the current chat user; return a bash-safe curl that only needs
-    the secret placeholder replaced (no Bearer / user headers for the end user).
-    """
-    if not config.SECRETS_MASTER_KEY:
-        return json.dumps(
-            {
-                "ok": False,
-                "error": (
-                    "Speichern ist auf dem Server nicht aktiviert: Betreiber muss einmalig "
-                    "AGENT_SECRETS_MASTER_KEY in docker/.env setzen (Verschlüsselung in Postgres — "
-                    "Endnutzer tragen das nie ein). Siehe TOOLS.md."
-                ),
-            },
-            ensure_ascii=False,
-        )
-    raw_svc = secret_otp_bundle.normalize_service_key(
-        arguments.get("service_key_example")
-    )
-    ttl = secret_otp_bundle.ttl_clamp(arguments.get("ttl_seconds"))
-    payload = secret_otp_bundle.build_otp_curl_payload(raw_svc, ttl)
-    return json.dumps({"ok": True, **payload}, ensure_ascii=False)
+__version__ = "1.0.0"
+PLUGIN_ID = "secrets_help"
 
 
 def secrets_help(arguments: dict[str, Any]) -> str:
@@ -197,74 +106,10 @@ def secrets_help(arguments: dict[str, Any]) -> str:
 
 
 HANDLERS: dict[str, Callable[[dict[str, Any]], str]] = {
-    "list_available_tools": list_available_tools,
-    "get_tool_help": get_tool_help,
-    "register_secrets": register_secrets,
     "secrets_help": secrets_help,
 }
 
 TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "list_available_tools",
-            "description": (
-                "Lists all tools this agent can run: name, short description, and JSON parameter schema. "
-                "Use when the user asks what you can do, which tools exist, or how to get started."
-            ),
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_tool_help",
-            "description": (
-                "Returns full help for one tool: description and parameter schema. "
-                "Use when the user asks how to use a specific tool by name."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "tool_name": {
-                        "type": "string",
-                        "description": "Exact tool name, e.g. create_todo, search_web",
-                    },
-                },
-                "required": ["tool_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "register_secrets",
-            "description": (
-                "ONLY way to get a valid OTP and curl for saving a user secret. You MUST invoke this tool — "
-                "NEVER invent or type a curl command yourself (wrong OTP, wrong JSON, broken quotes). "
-                "Copy to the user ONLY the exact curl_bash string from YOUR tool response JSON (and jq_register_example_de if present). "
-                "Match service_key_example to what the user asked for: Google Calendar iCal URL → google_calendar; Gmail → gmail; GitHub PAT → github_pat; generic ICS → calendar_ics. "
-                "Always include for_assistant_must_say_de: secret is NOT stored until the user runs that curl/jq and gets stored:true. "
-                "Do NOT pretty-print curl_bash. Never paste real secrets or iCal URLs into chat."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "service_key_example": {
-                        "type": "string",
-                        "description": (
-                            "Must match the integration: google_calendar (Google secret iCal link), calendar_ics (other HTTPS ICS), "
-                            "gmail (IMAP app password JSON), github_pat (token JSON). Lowercase [a-z0-9._-]."
-                        ),
-                    },
-                    "ttl_seconds": {
-                        "type": "integer",
-                        "description": "Optional OTP lifetime 120–3600 (default 600).",
-                    },
-                },
-            },
-        },
-    },
     {
         "type": "function",
         "function": {

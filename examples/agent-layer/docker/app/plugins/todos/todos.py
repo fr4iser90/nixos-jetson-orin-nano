@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from .. import db
+from app import db
 
 __version__ = "1.1.1"
 PLUGIN_ID = "todos"

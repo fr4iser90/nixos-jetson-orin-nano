@@ -14,10 +14,10 @@ from urllib.parse import urlparse
 import httpx
 from icalendar import Calendar
 
-from .. import config
-from .. import db
-from .. import identity
-from .. import secret_otp_bundle
+from app import config
+from app import db
+from app import identity
+from app import secret_otp_bundle
 
 logger = logging.getLogger(__name__)
 

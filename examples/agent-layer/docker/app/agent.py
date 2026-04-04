@@ -47,7 +47,7 @@ def _tool_spec_name(entry: Any) -> str | None:
 
 def _merge_tools(body_tools: list[Any] | None) -> list[Any]:
     """
-    Always send registry tools to Ollama (create_todo, …).
+    Always merge the live registry tool list into the request for Ollama.
 
     Open WebUI often sends its own non-empty ``tools`` list; previously that
     replaced our list entirely so the model never saw agent-layer tools.
@@ -114,9 +114,26 @@ def _known_tool_names() -> set[str]:
     return {n for t in get_registry().openai_tools if (n := _tool_spec_name(t))}
 
 
+def _coerce_params_dict(p: Any) -> dict[str, Any] | None:
+    if p is None:
+        return {}
+    if isinstance(p, dict):
+        return p
+    if isinstance(p, str):
+        s = p.strip()
+        if not s:
+            return {}
+        try:
+            o = json.loads(s)
+        except json.JSONDecodeError:
+            return None
+        return dict(o) if isinstance(o, dict) else None
+    return None
+
+
 def _parse_tool_intent_from_content(content: str) -> tuple[str, dict[str, Any]] | None:
     """
-    Models like nemotron-3-nano emit {\"tool\": \"create_todo\", \"parameters\": {...}} in content
+    Some models emit JSON like {\"tool\": \"<name>\", \"parameters\": {...}} in message content
     instead of OpenAI-style tool_calls.
     """
     obj = _extract_first_json_object(_unwrap_fenced_json(content))
@@ -129,22 +146,19 @@ def _parse_tool_intent_from_content(content: str) -> tuple[str, dict[str, Any]] 
         p = obj.get("parameters")
         if not isinstance(p, dict):
             p = obj.get("arguments")
-        if isinstance(p, dict):
-            params = p
+        params = _coerce_params_dict(p)
     elif isinstance(obj.get("name"), str):
         name = obj["name"]
         p = obj.get("parameters")
         if not isinstance(p, dict):
             p = obj.get("arguments")
-        if isinstance(p, dict):
-            params = p
+        params = _coerce_params_dict(p)
     elif isinstance(obj.get("function"), str):
         name = obj["function"]
         p = obj.get("parameters")
         if not isinstance(p, dict):
             p = obj.get("arguments")
-        if isinstance(p, dict):
-            params = p
+        params = _coerce_params_dict(p)
     if not name or params is None:
         return None
     return name, params
@@ -272,11 +286,25 @@ async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
 
             if not tool_calls:
                 if tools:
-                    logger.warning(
-                        "no tool_calls and content fallback missed (model=%s message_keys=%s)",
-                        model,
-                        list(msg.keys()),
-                    )
+                    blobs = _text_blobs_from_message(msg)
+                    if choice0:
+                        for key in ("thought", "reasoning", "thinking"):
+                            v = choice0.get(key)
+                            if isinstance(v, str) and v.strip():
+                                blobs.append(v)
+                    any_text = any(b.strip() for b in blobs)
+                    if any_text:
+                        logger.debug(
+                            "no tool_calls; assistant replied with text (model=%s keys=%s)",
+                            model,
+                            list(msg.keys()),
+                        )
+                    else:
+                        logger.warning(
+                            "no tool_calls and content fallback missed (empty reply; model=%s keys=%s)",
+                            model,
+                            list(msg.keys()),
+                        )
                 return data
 
             # Append assistant message (includes tool_calls, and content if any)

@@ -10,8 +10,8 @@ from urllib.parse import quote
 
 import httpx
 
-from .. import db
-from .. import identity
+from app import db
+from app import identity
 
 __version__ = "1.0.0"
 PLUGIN_ID = "github"

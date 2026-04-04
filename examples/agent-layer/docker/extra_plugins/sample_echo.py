@@ -1,5 +1,5 @@
-# Copy into a directory mounted as AGENT_PLUGINS_EXTRA_DIR (see compose.yaml).
-# After adding or editing files: POST /v1/admin/reload-plugins (with AGENT_API_KEY if set).
+# Copy into AGENT_PLUGINS_EXTRA_DIR (flat or nested subfolders; registry scans recursively).
+# After adding or editing: POST /v1/admin/reload-plugins (with AGENT_API_KEY if set).
 
 from __future__ import annotations
 

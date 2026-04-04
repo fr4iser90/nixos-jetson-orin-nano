@@ -8,7 +8,7 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +19,8 @@ from . import db
 from . import identity
 from .agent import chat_completion
 from .http_identity import resolve_user_tenant
-from .registry import get_registry, reload_registry
+from .plugins_api import router as plugins_router
+from .registry import get_registry
 from .user_secrets_api import router as user_secrets_router
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
@@ -37,6 +38,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="agent-layer", version="0.6.0", lifespan=lifespan)
 app.include_router(user_secrets_router)
+app.include_router(plugins_router)
 
 _cors_origins = [
     o.strip() for o in os.environ.get("AGENT_CORS_ORIGINS", "*").split(",") if o.strip()
@@ -195,50 +197,3 @@ async def chat_completions(request: Request):
         )
 
     return result
-
-
-@app.get("/v1/tools")
-async def list_tools():
-    """Registered tool schemas (same list sent to the model when the client sends no tools)."""
-    reg = get_registry()
-    return {"tools": reg.openai_tools, "plugins": reg.plugins_meta}
-
-
-@app.get("/v1/admin/plugins")
-async def admin_list_plugins():
-    """Plugin metadata only (id, version, source, tool names)."""
-    reg = get_registry()
-    return {"plugins": reg.plugins_meta}
-
-
-@app.post("/v1/admin/reload-plugins")
-async def admin_reload_plugins(
-    scope: Literal["all", "extra"] = "all",
-):
-    """
-    Rebuild the tool registry.
-
-    - ``scope=all`` (default): reload ``app.plugins`` and ``AGENT_PLUGINS_EXTRA_DIR`` (full restart of plugin modules).
-    - ``scope=extra``: only rescan ``AGENT_PLUGINS_EXTRA_DIR``; built-in plugins stay loaded (no ``importlib`` purge of ``app.plugins``).
-
-    Optional: ``AGENT_PLUGINS_ALLOWED_SHA256`` — comma-separated SHA256 of allowed extra ``*.py`` files.
-
-    If ``AGENT_API_KEY`` is set, send ``Authorization: Bearer <key>``.
-    """
-    if not config.OPTIONAL_API_KEY:
-        logger.warning(
-            "reload-plugins called with AGENT_API_KEY unset — consider setting it if exposed"
-        )
-    try:
-        reg = reload_registry(scope=scope)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except Exception as e:
-        logger.exception("reload-plugins failed")
-        raise HTTPException(status_code=500, detail=str(e))
-    return {
-        "ok": True,
-        "scope": scope,
-        "plugins": reg.plugins_meta,
-        "tool_count": len(reg.openai_tools),
-    }

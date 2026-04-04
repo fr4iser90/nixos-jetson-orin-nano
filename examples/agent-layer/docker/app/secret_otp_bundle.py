@@ -1,4 +1,4 @@
-"""Shared OTP + curl_bash payload for register-with-otp (used by meta.register_secrets and plugins)."""
+"""Shared OTP + curl_bash payload for register-with-otp (used by register_secrets plugin and HTTP API)."""
 
 from __future__ import annotations
 

@@ -10,8 +10,8 @@ from email.header import decode_header
 from email.message import Message
 from typing import Any, Callable
 
-from .. import db
-from .. import identity
+from app import db
+from app import identity
 
 __version__ = "1.0.1"
 PLUGIN_ID = "gmail"

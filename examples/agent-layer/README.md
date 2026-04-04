@@ -75,8 +75,9 @@ Weitere Variablen: siehe `docker/.env.example` (`OLLAMA_BASE_URL`, `AGENT_HTTP_P
 
 ## Plugins
 
-- **Built-in:** `docker/app/plugins/*.py` — pro Datei `TOOLS` + `HANDLERS`, optional `PLUGIN_ID`, `__version__` (u. a. `gmail.py` für IMAP/Gmail, siehe [TOOLS.md](./TOOLS.md#gmail-plugin-gmail)).
-- **Extra:** `AGENT_PLUGINS_EXTRA_DIR` + `*.py`, Reload: `POST /v1/admin/reload-plugins?scope=extra` (mit `AGENT_API_KEY`, falls gesetzt).
+- **Laden:** Die Registry scannt Plugin-Wurzeln **rekursiv** nach `*.py` (Domänen-Ordner unter `docker/app/plugins/`, z. B. `github/`, `secrets/`, `calendar/`). Standard-Wurzel: `app/plugins` im Image, optional `AGENT_PLUGINS_EXTRA_DIR`. Mit **`AGENT_PLUGIN_DIRS`** (Komma-Liste) steuerst du die Wurzeln selbst.
+- **Pro Datei:** `TOOLS` + `HANDLERS`, optional `PLUGIN_ID`, `__version__` — siehe [TOOLS.md](./TOOLS.md).
+- **Reload:** `POST /v1/admin/reload-plugins` (mit `AGENT_API_KEY`, falls gesetzt) — voller Rescan aller konfigurierten Verzeichnisse.
 
 Details und **Checkliste** der Tools: [TOOLS.md](./TOOLS.md).
 

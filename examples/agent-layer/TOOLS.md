@@ -1,7 +1,7 @@
 # Agent layer — Tools
 
 Übersicht über **eingebaute** und **geplante** Tools, dazu Ideen für Erweiterungen.  
-Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (Python). Secrets über **Umgebungsvariablen** / **`.env`** (siehe `docker/.env.example`), nicht hardcoden.
+Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten Plugin-Wurzeln** (`AGENT_PLUGIN_DIRS` oder Standard: `app/plugins` + optional `AGENT_PLUGINS_EXTRA_DIR`). Die Registry scannt **rekursiv** (Domänen-Unterordner wie `github/`, `secrets/`, `calendar/`). Kein Tool ist im HTTP-Core eingetragen. Secrets nur über **`.env`** / Env, siehe `docker/.env.example`.
 
 ---
 
@@ -15,10 +15,11 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 | [x] | `set_todo_status` | `todos` | Status nur für eigene Zeilen. |
 | [x] | `search_web` | `web_search` | Tavily → Brave → **ddgs**-Metasuche ohne API-Key (inoffiziell). |
 | [x] | `deep_search` | `web_search` | Tavily: `raw_content`. Ohne: Snippets + **Seitenabruf** wenn `robots.txt` den UA erlaubt (`fetch_status`, `raw_content`). Abschalten: `AGENT_DISABLE_FETCH_DEEP=true`. |
-| [x] | `list_available_tools` | `meta` | Alle Tools mit Beschreibung + JSON-Schema (Parameter). |
-| [x] | `get_tool_help` | `meta` | Hilfe zu einem Tool nach Namen (`tool_name`). |
-| [x] | `register_secrets` | `meta` | Secret registrieren: Einmalcode + fertiger `curl` (OTP-Flow); z. B. `service_key_example: gmail`. |
-| [x] | `secrets_help` | `meta` | Statische Hilfe zu User-Secrets; **kein** OTP — OTP nur aus `register_secrets`. |
+| [x] | `list_available_tools` | `tool_help` | Alle Tools mit Beschreibung + JSON-Schema (Parameter). |
+| [x] | `get_tool_help` | `tool_help` | Hilfe zu einem Tool nach Namen (`tool_name`). |
+| [x] | `register_secrets` | `register_secrets` | Secret registrieren: Einmalcode + fertiger `curl` (OTP-Flow); nur in `register_secrets.py`. |
+| [x] | `secrets_help` | `secrets_help` | Statische Hilfe zu User-Secrets; **kein** OTP — OTP nur aus `register_secrets`. |
+| [x] | `create_tool` | `create_tool` | Schreibt Extra-Plugin (`.py` mit `TOOLS`+`HANDLERS`); nur wenn `AGENT_CREATE_TOOL_ENABLED=true` und beschreibbarer `AGENT_PLUGINS_EXTRA_DIR`. |
 | [x] | `gmail_search` | `gmail` | Gmail-Suche (IMAP `X-GM-RAW`, z. B. `newer_than:7d is:unread`). |
 | [x] | `gmail_read` | `gmail` | Eine Mail per IMAP-UID lesen (Plain-Text-Body, gekürzt). |
 | [x] | `gmail_collect_for_summary` | `gmail` | Mehrere Mails laden → `combined_excerpt`; Modell fasst für den Nutzer zusammen. |
@@ -31,6 +32,13 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 | [x] | `kb_append_note` | `kb` | Persönliche Notiz in Postgres (gleiche User-Scope wie Todos). |
 | [x] | `kb_search_notes` | `kb` | Notizen durchsuchen (Volltext + ILIKE). |
 | [x] | `kb_read_note` | `kb` | Eine Notiz per `id` voll lesen (Längenlimit). |
+| [x] | `workspace_stat` | `workspace` | Metadaten zu einem Pfad unter `AGENT_WORKSPACE_ROOT` (lokaler Mount). |
+| [x] | `workspace_list_dir` | `workspace` | Verzeichnisinhalt (relativ, Limits). |
+| [x] | `workspace_read_file` | `workspace` | Textdatei lesen (optional Zeilenfenster, UTF-8). |
+| [x] | `workspace_glob` | `workspace` | Dateien per Glob ab `path` (z. B. `**/*.py`). |
+| [x] | `workspace_search_text` | `workspace` | Volltextsuche (Substring oder Regex) im Mount. |
+| [x] | `workspace_replace_text` | `workspace` | `old_string` → `new_string` (einmalig oder `replace_all`). |
+| [x] | `workspace_write_file` | `workspace` | Datei anlegen/überschreiben; legt Elternverzeichnisse im Mount an. |
 
 *(Frühere Tool-Namen `issue_secret_registration_otp` / `secret_storage_help` — durch Umbenennung ersetzt.)*
 
@@ -38,6 +46,15 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 
 - Pro Tool: **`description`** + **`parameters`** im OpenAI-Schema (sieht das Modell in jedem Request).
 - Explizit abfragbar: **`list_available_tools`** (Übersicht), **`get_tool_help`** mit `tool_name` (ein Tool ausführlich + kurzer `how_to_use`-Hinweis).
+
+### Dynamisches Extra-Plugin (`create_tool`)
+
+- **Zweck:** Extra-Plugin in **`AGENT_PLUGINS_EXTRA_DIR`** schreiben und Registry neu laden — neue Tool-Namen erscheinen danach in **`list_available_tools`** (Plugin-Datei `create_tool.py`).
+- **Kurzform (ohne `source`):** Nur **`tool_name`** (oder **`name`**) setzen, z. B. `fishingIndex` — der Server ruft Ollama auf (**`AGENT_CREATE_TOOL_CODEGEN_MODEL`**, Default `qwen2.5-coder:3b`; bei Bedarf z. B. `qwen2.5-coder:7b`), erzeugt ein Modul mit genau einem Tool (Snake-Case-Name + Datei `<name>.py`), validiert, schreibt, **`reload_registry`**, und führt **einen Probelauf** (`run_tool`) mit optional **`test_arguments`** aus. **`description`** optional für genauere Codegen-Hinweise (z. B. Beißindex 0–10).
+- **Klassisch:** **`filename`** + **`source`** wie bisher (voller Quelltext).
+- **Aktivierung:** `AGENT_CREATE_TOOL_ENABLED=true` — wenn **`AGENT_PLUGINS_EXTRA_DIR`** nicht gesetzt ist, verwendet der Agent **`/data/plugins`** (Compose-Volume z. B. **`./extra_plugins:/data/plugins:rw`**). Anderen Pfad nur bei Bedarf setzen. Optional **`AGENT_CREATE_TOOL_MAX_BYTES`** (Default siehe `config.py`).
+- **Allowlist:** Ist **`AGENT_PLUGINS_ALLOWED_SHA256`** gesetzt und der neue Digest **nicht** darin, liefert das Tool `reload: pending` + **`sha256`** — Betreiber ergänzt die Whitelist und ruft **`POST /v1/admin/reload-plugins`** (oder Neustart).
+- **Aufbau des Quelltexts:** Wie `docker/extra_plugins/sample_echo.py`: Modul mit **`TOOLS`** (OpenAI-Function-Liste), **`HANDLERS`** (Name → Callable), Handler-Funktionen mit `def foo(arguments: dict) -> str` und `return json.dumps(...)`. AST-Check verbietet u. a. `subprocess`, `eval`/`exec`, `os.system` — **kein vollständiger Sandbox**; nur in vertrauenswürdigen Umgebungen aktivieren (**`AGENT_API_KEY`** empfohlen).
 
 **Validiert (manuell / Stack):** Tool-Loop über Agent → Ollama, Einträge in `todos` + `tool_invocations`; Open WebUI mit OpenAI-Base-URL auf den Agent; `stream: true` über SSE-Shim; Tool-Merge mit WebUI-`tools`; Content-JSON-Fallback für Modelle mit `reasoning`-Feld.
 
@@ -83,6 +100,13 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 - **Token:** Umgebung **`GITHUB_TOKEN`** (Compose-`.env`) für alle Nutzer **oder** pro Nutzer Secret **`github_pat`** mit JSON `{"token":"ghp_…"}` bzw. `github_pat_…` (überschreibt Env). Nur **read-only**-Scopes / Fine-grained PAT empfohlen.
 - **Tools:** **`github_search_code`**, **`github_search_issues`**, **`github_get_file`**, **`github_list_pull_requests`**, **`github_get_issue`** — siehe `get_tool_help`.
 
+### Lokaler Workspace (`plugin workspace`)
+
+- **Nicht dasselbe wie GitHub:** **`github_get_file`** liest über die **GitHub-REST-API** (Remote-Repo, Branch/SHA). Die **`workspace_*`**-Tools arbeiten auf **einem gemounteten Verzeichnis** im Agent-Container (`AGENT_WORKSPACE_ROOT`, absoluter Pfad, z. B. Host-Projekt nach `/workspace`).
+- **Aktivierung:** In `docker/.env` **`AGENT_WORKSPACE_ROOT=/workspace`** (oder anderer Pfad) setzen und in `compose.yaml` ein **Volume** eintragen, z. B. `- /pfad/auf/host:/workspace:rw`. Ohne gültiges Verzeichnis liefern alle `workspace_*`-Calls eine klare Fehlermeldung (`ok: false`).
+- **Sicherheit:** Nur Pfade **unter** dem aufgelösten Root (kein `..`, kein führendes `/` in `path`). Symlinks werden beim Auflösen berücksichtigt — Mount nur vertrauenswürdige Daten. Schreib-Tools können Dateien **zerstören**; Betreiber-Scope wie Shell-Zugriff.
+- **Limits:** u. a. `AGENT_WORKSPACE_MAX_FILE_BYTES`, `AGENT_WORKSPACE_MAX_READ_LINES`, `AGENT_WORKSPACE_SEARCH_MAX_FILE_BYTES` (Suche überspringt größere Dateien), `AGENT_WORKSPACE_MAX_SEARCH_*` / `AGENT_WORKSPACE_MAX_GLOB_FILES` — siehe `docker/.env.example` und `app/config.py`.
+
 ### Kalender ICS (`plugin calendar_ics`)
 
 - **User-Secrets** (gleiches JSON, der Agent probiert **`google_calendar`** zuerst, sonst **`calendar_ics`**):  
@@ -105,7 +129,7 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 | [x] | GitHub Search / Repo-Read | Plugin `github`; Env `GITHUB_TOKEN` oder Secret `github_pat`. |
 | [x] | HTTP-Fetch + robots.txt + noindex | `deep_search` ohne Tavily; optionale Allowlist via Env. |
 | [ ] | Weitere Search-Provider (SerpAPI, …) | Optional ergänzen. |
-| [ ] | Lokale Dateien (read-only Mount) | Nur definierte Pfade. |
+| [x] | Lokaler Workspace (Mount, read/write) | Plugin `workspace`; `AGENT_WORKSPACE_ROOT` + Volume. |
 | [ ] | Home Assistant / MQTT | Topic-Whitelist. |
 | [ ] | RAG mit Embeddings (pgvector, …) | Aktuell: `kb_*` mit Postgres FTS; Embeddings optional. |
 | [ ] | Kalender CalDAV (Lesen/Schreiben) | Aktuell nur ICS-URL read-only. |

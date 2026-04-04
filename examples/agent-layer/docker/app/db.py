@@ -382,6 +382,16 @@ def log_tool_invocation(
 ) -> None:
     excerpt = (result_text or "")[:4000]
     tenant_id, user_id = identity.get_identity()
+    args_for_db: Any = args
+    if isinstance(args, dict):
+        redact = config.tool_log_redact_keys()
+        if redact:
+            args_for_db = {}
+            for k, v in args.items():
+                if k in redact and isinstance(v, str) and len(v) > 200:
+                    args_for_db[k] = f"<omitted {len(v)} chars>"
+                else:
+                    args_for_db[k] = v
     try:
         with pool().connection() as conn:
             with conn.cursor() as cur:
@@ -391,7 +401,7 @@ def log_tool_invocation(
                       (tool_name, args_json, result_excerpt, ok, tenant_id, user_id)
                     VALUES (%s, %s, %s, %s, %s, %s)
                     """,
-                    (tool_name, Json(args), excerpt, ok, tenant_id, user_id),
+                    (tool_name, Json(args_for_db), excerpt, ok, tenant_id, user_id),
                 )
             conn.commit()
     except psycopg.Error:

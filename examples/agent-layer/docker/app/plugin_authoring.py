@@ -1,0 +1,177 @@
+"""Static checks for ``create_tool``-submitted plugin source (syntax + AST). Not a sandbox."""
+
+from __future__ import annotations
+
+import ast
+import re
+from typing import Any
+
+_FILENAME_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]*\.py\Z")
+
+# Top-level import roots we reject (extend with care).
+_FORBIDDEN_IMPORT_ROOTS = frozenset(
+    {
+        "subprocess",
+        "multiprocessing",
+        "ctypes",
+        "pickle",
+        "_pickle",
+        "shelve",
+        "socket",
+        "ssl",
+        "pty",
+        "resource",
+        "importlib",
+    }
+)
+
+_FORBIDDEN_FROM_OS_NAMES = frozenset(
+    {
+        "system",
+        "popen",
+        "posix_spawn",
+        "spawnv",
+        "spawnvp",
+        "spawnl",
+        "spawnlp",
+        "execl",
+        "execle",
+        "execlp",
+        "execv",
+        "execve",
+        "execvp",
+        "execvpe",
+    }
+)
+
+
+def slugify_openai_tool_name(raw: str) -> tuple[str | None, str | None]:
+    """
+    Map a short hint like ``fishingIndex`` → ``fishing_index`` for filename + OpenAI function name.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None, "tool_name is required when source is omitted"
+    s = re.sub(r"\s+", "_", s)
+    s = s.replace("-", "_")
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9_]+", "_", s)
+    s = re.sub(r"_+", "_", s).strip("_")
+    if not s:
+        return None, "tool_name must contain letters or digits"
+    if s[0].isdigit():
+        s = f"t_{s}"
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", s):
+        return (
+            None,
+            "tool_name must yield a valid identifier (letters, digits, underscore; start with letter)",
+        )
+    return s, None
+
+
+def sanitize_plugin_filename(name: str) -> tuple[str | None, str | None]:
+    s = (name or "").strip()
+    if not s:
+        return None, "filename is required"
+    if "/" in s or "\\" in s or s.startswith("."):
+        return None, "filename must be a single basename (no path, no leading dot)"
+    if not _FILENAME_RE.fullmatch(s):
+        return (
+            None,
+            "filename must match [A-Za-z0-9][A-Za-z0-9_-]*.py",
+        )
+    return s, None
+
+
+def _import_root(name: str) -> str:
+    return (name or "").split(".", 1)[0]
+
+
+def _module_assigns_tools_handlers(tree: ast.Module) -> tuple[bool, bool]:
+    has_tools = False
+    has_handlers = False
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    if t.id == "TOOLS":
+                        has_tools = True
+                    elif t.id == "HANDLERS":
+                        has_handlers = True
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == "TOOLS":
+                has_tools = True
+            elif node.target.id == "HANDLERS":
+                has_handlers = True
+    return has_tools, has_handlers
+
+
+class _PluginAstChecker(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.error: str | None = None
+
+    def _set(self, msg: str) -> None:
+        if self.error is None:
+            self.error = msg
+
+    def visit_Import(self, node: ast.Import) -> Any:
+        for alias in node.names:
+            root = _import_root(alias.name)
+            if root in _FORBIDDEN_IMPORT_ROOTS:
+                self._set(f"forbidden import: {alias.name}")
+                return
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> Any:
+        if node.module:
+            root = _import_root(node.module)
+            if root in _FORBIDDEN_IMPORT_ROOTS:
+                self._set(f"forbidden import from: {node.module}")
+                return
+            if node.module == "os":
+                for a in node.names:
+                    if a.name == "*":
+                        self._set("forbidden: from os import *")
+                        return
+                    if a.name in _FORBIDDEN_FROM_OS_NAMES:
+                        self._set(f"forbidden import from os: {a.name}")
+                        return
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> Any:
+        fn = node.func
+        if isinstance(fn, ast.Name):
+            if fn.id in ("eval", "exec", "compile", "__import__"):
+                self._set(f"forbidden call: {fn.id}()")
+                return
+        if isinstance(fn, ast.Attribute):
+            if fn.attr in _FORBIDDEN_FROM_OS_NAMES and isinstance(fn.value, ast.Name):
+                if fn.value.id == "os":
+                    self._set(f"forbidden call: os.{fn.attr}")
+                    return
+            if isinstance(fn.value, ast.Name) and fn.value.id == "subprocess":
+                self._set("forbidden use of subprocess module")
+                return
+        self.generic_visit(node)
+
+
+def validate_plugin_source(source: str) -> str | None:
+    """
+    Return an error string if validation fails, else None.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        return f"syntax error: {e}"
+
+    if not isinstance(tree, ast.Module):
+        return "invalid ast"
+
+    has_t, has_h = _module_assigns_tools_handlers(tree)
+    if not has_t or not has_h:
+        return "module must define top-level TOOLS (list) and HANDLERS (dict) assignments"
+
+    checker = _PluginAstChecker()
+    checker.visit(tree)
+    return checker.error

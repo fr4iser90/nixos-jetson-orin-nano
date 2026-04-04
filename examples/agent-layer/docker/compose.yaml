@@ -75,8 +75,26 @@ services:
       BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       SERPAPI_API_KEY: ${SERPAPI_API_KEY:-}
+      # Local workspace (workspace_* tools): absolute path inside container + host bind mount (see .env.example).
+      AGENT_WORKSPACE_ROOT: ${AGENT_WORKSPACE_ROOT:-}
+      AGENT_WORKSPACE_MAX_FILE_BYTES: ${AGENT_WORKSPACE_MAX_FILE_BYTES:-}
+      AGENT_WORKSPACE_MAX_LIST_ENTRIES: ${AGENT_WORKSPACE_MAX_LIST_ENTRIES:-}
+      AGENT_WORKSPACE_MAX_GLOB_FILES: ${AGENT_WORKSPACE_MAX_GLOB_FILES:-}
+      AGENT_WORKSPACE_MAX_READ_LINES: ${AGENT_WORKSPACE_MAX_READ_LINES:-}
+      AGENT_WORKSPACE_MAX_SEARCH_FILES: ${AGENT_WORKSPACE_MAX_SEARCH_FILES:-}
+      AGENT_WORKSPACE_MAX_SEARCH_MATCHES: ${AGENT_WORKSPACE_MAX_SEARCH_MATCHES:-}
+      AGENT_WORKSPACE_SEARCH_MAX_FILE_BYTES: ${AGENT_WORKSPACE_SEARCH_MAX_FILE_BYTES:-}
+      # create_tool plugin: writes AGENT_PLUGINS_EXTRA_DIR; default disabled.
+      AGENT_CREATE_TOOL_ENABLED: ${AGENT_CREATE_TOOL_ENABLED:-}
+      AGENT_CREATE_TOOL_MAX_BYTES: ${AGENT_CREATE_TOOL_MAX_BYTES:-}
+      AGENT_CREATE_TOOL_CODEGEN_MODEL: ${AGENT_CREATE_TOOL_CODEGEN_MODEL:-}
+      AGENT_CREATE_TOOL_CODEGEN_TIMEOUT: ${AGENT_CREATE_TOOL_CODEGEN_TIMEOUT:-}
+      AGENT_PLUGIN_DIRS: ${AGENT_PLUGIN_DIRS:-}
+      AGENT_TOOL_LOG_REDACT_KEYS: ${AGENT_TOOL_LOG_REDACT_KEYS:-}
     # volumes:
-    #   - ./extra_plugins:/data/plugins:ro
+    #   - ./extra_plugins:/data/plugins:ro   # read-only extras
+    #   - ./extra_plugins:/data/plugins:rw   # create_tool: AGENT_CREATE_TOOL_ENABLED=true (Default-Pfad /data/plugins im Code)
+    #   - /path/on/host/your-project:/workspace:rw
     networks:
       - ai-net
 volumes:
