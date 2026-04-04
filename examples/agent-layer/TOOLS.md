@@ -18,10 +18,19 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 | [x] | `list_available_tools` | `meta` | Alle Tools mit Beschreibung + JSON-Schema (Parameter). |
 | [x] | `get_tool_help` | `meta` | Hilfe zu einem Tool nach Namen (`tool_name`). |
 | [x] | `register_secrets` | `meta` | Secret registrieren: Einmalcode + fertiger `curl` (OTP-Flow); z. B. `service_key_example: gmail`. |
-| [x] | `secrets_help` | `meta` | Hilfe: Überblick + Legacy-`curl` für Liste/Löschen / Header-POST (kein OTP). |
+| [x] | `secrets_help` | `meta` | Statische Hilfe zu User-Secrets; **kein** OTP — OTP nur aus `register_secrets`. |
 | [x] | `gmail_search` | `gmail` | Gmail-Suche (IMAP `X-GM-RAW`, z. B. `newer_than:7d is:unread`). |
 | [x] | `gmail_read` | `gmail` | Eine Mail per IMAP-UID lesen (Plain-Text-Body, gekürzt). |
 | [x] | `gmail_collect_for_summary` | `gmail` | Mehrere Mails laden → `combined_excerpt`; Modell fasst für den Nutzer zusammen. |
+| [x] | `github_search_code` | `github` | Code-Suche (GitHub-Query-Syntax); Token: `GITHUB_TOKEN` oder User-Secret `github_pat`. |
+| [x] | `github_search_issues` | `github` | Issues/PRs-Suche (`repo:…`, `is:open`, …). |
+| [x] | `github_get_file` | `github` | Eine Datei aus einem Repo (UTF-8-Text, gekürzt wenn sehr groß). |
+| [x] | `github_list_pull_requests` | `github` | PRs eines Repos (`open` / `closed` / `all`). |
+| [x] | `github_get_issue` | `github` | Ein Issue oder PR nach Nummer inkl. Body-Auszug. |
+| [x] | `calendar_ics_list_events` | `calendar_ics` | Termine aus **ICS-URL**; Secrets **`google_calendar`** (zuerst) oder **`calendar_ics`**, Monats-Parameter + **`by_month`**. |
+| [x] | `kb_append_note` | `kb` | Persönliche Notiz in Postgres (gleiche User-Scope wie Todos). |
+| [x] | `kb_search_notes` | `kb` | Notizen durchsuchen (Volltext + ILIKE). |
+| [x] | `kb_read_note` | `kb` | Eine Notiz per `id` voll lesen (Längenlimit). |
 
 *(Frühere Tool-Namen `issue_secret_registration_otp` / `secret_storage_help` — durch Umbenennung ersetzt.)*
 
@@ -34,7 +43,7 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 
 ### Multi-User (Postgres)
 
-- Tabellen: **`tenants`**, **`users`** (`external_sub` pro Login, eindeutig je `tenant_id`); **`todos`** und **`tool_invocations`** haben **`tenant_id`** + **`user_id`**.
+- Tabellen: **`tenants`**, **`users`** (`external_sub` pro Login, eindeutig je `tenant_id`); **`todos`**, **`user_kb_notes`** und **`tool_invocations`** haben **`tenant_id`** + **`user_id`**.
 - Pro Chat-Request setzt der Agent die Identität aus HTTP-Headern (dann `contextvars` für alle Tool-Handler):
   - **User-Kennung** — Standard: zuerst **`X-OpenWebUI-User-Id`** (Open WebUI mit `ENABLE_FORWARD_USER_INFO_HEADERS`), sonst **`X-Agent-User-Sub`**. Reihenfolge/Namen: `AGENT_USER_SUB_HEADER` (kommagetrennt).
   - **`X-Agent-Tenant-Id`** — numerische Tenant-ID (Default `1` = `default`-Tenant). Optional: `AGENT_TENANT_ID_HEADER`.
@@ -51,11 +60,12 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 - **`AGENT_SECRETS_MASTER_KEY`** (nur **Betreiber**, nie Endnutzer): Fernet-Key erzeugen mit  
   `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`  
   — in **`docker/.env`**, nicht committen. Verschlüsselt nur die Datenbank-Inhalte; Nutzer sehen oder tippen das **nicht**. Bei Key-Verlust sind gespeicherte Secrets **nicht** wiederherstellbar.
-- **Registrieren (empfohlen):** Tool **`register_secrets`** — legt ein **Einmalkennwort** für den **aktuellen Chat-User** an und liefert **`curl_bash`**: darin ist das OTP schon im JSON; der Nutzer ersetzt nur den Platzhalter **`DEIN_GMAIL_APP_PASSWORT`** lokal und führt den Befehl aus. Endpoint: **`POST /v1/user/secrets/register-with-otp`** (ohne Bearer — wenn `AGENT_API_KEY` gesetzt ist, ist dieser Pfad davon ausgenommen). Feld **`secret`** darf **String** (JSON-Text) oder **Objekt** sein — z. B. `{"email":"…","app_password":"…"}` direkt im Body (kein Escaping nötig).
+- **Registrieren (Chat):** Tool **`register_secrets`** — legt ein **Einmalkennwort** für den **aktuellen Chat-User** an und liefert **`curl_bash`** (und ggf. **`jq_register_example_de`**): darin ist das OTP schon im JSON; der Nutzer ersetzt nur lokale Platzhalter (Passwort, iCal-URL, …) und führt den Befehl im **Terminal** aus. Endpoint: **`POST /v1/user/secrets/register-with-otp`** (ohne Bearer — wenn `AGENT_API_KEY` gesetzt ist, ist dieser Pfad davon ausgenommen). Feld **`secret`** darf **String** (JSON-Text) oder **Objekt** sein — z. B. `{"email":"…","app_password":"…"}` direkt im Body (kein Escaping nötig).
 - **OTP-Sicherheit:** Wer den Chat mitlesen kann, könnte das OTP nutzen — kurz gültig (Standard 10 min), **einmalig**; Befehl zeitnah ausführen.
-- **Legacy** (Header + optional Bearer): `POST /v1/user/secrets` mit denselben User-Headern wie beim Chat; wenn **`AGENT_API_KEY`** gesetzt ist, **`Authorization: Bearer …`** = **nur** dieser Agent-Key (Open-WebUI-Connection), **niemals** die WebUI-User-ID. **`GET`** / **`DELETE`** für Auflisten bzw. Entfernen von `service_key`s ebenfalls mit diesen Headern (und Bearer falls konfiguriert).
+- **`secrets_help`:** nur **Erklärung** im Tool-JSON — **kein** OTP, **kein** curl. OTP ausschließlich aus der Antwort von **`register_secrets`**.
+- **Auflisten / Löschen** gespeicherter `service_key`s: HTTP **`GET`** / **`DELETE`** `/v1/user/secrets` mit denselben **User-Headern** wie beim Chat; wenn **`AGENT_API_KEY`** gesetzt ist, zusätzlich **`Authorization: Bearer …`** = **nur** dieser Agent-Key (**niemals** die WebUI-User-ID als Bearer). Für direktes Speichern ohne OTP (Skripte): **`POST`** `/v1/user/secrets` mit denselben Headern — siehe FastAPI-Doku unter dem Agent.
 - **Plugins** (z. B. E-Mail): serverseitig nur `db.user_secret_get_plaintext(user_id, "…")`; **nie** Klartext in Tool-Antworten an das Modell.
-- **Chat-Hilfe:** **`register_secrets`** zum Speichern; **`secrets_help`** für Überblick und Legacy-`curl`. Optional **`AGENT_PUBLIC_URL`** für die Basis-URL in den Vorlagen.
+- **Chat-Hilfe:** **`register_secrets`** zum Speichern; **`secrets_help`** nur zur Orientierung. Optional **`AGENT_PUBLIC_URL`** für die Basis-URL in den `register_secrets`-Vorlagen.
 
 ### Gmail (`plugin gmail`)
 
@@ -68,18 +78,37 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 - **Zugriff:** IMAP **`imap.gmail.com:993`**, Standard-Mailbox **`INBOX`** (Parameter `mailbox` bei Bedarf).
 - **Tools:** **`gmail_search`** (Gmail-Suchsyntax wie in der Web-UI), **`gmail_read`** (`uid` aus der Suche), **`gmail_collect_for_summary`** (mehrere Mails → Auszüge; das **Modell** soll daraus eine Zusammenfassung formulieren). **Keine** Mail-Inhalte absichtlich vollständig spammen: `limit` / `max_body_chars` / `max_messages` beachten.
 
+### GitHub (`plugin github`)
+
+- **Token:** Umgebung **`GITHUB_TOKEN`** (Compose-`.env`) für alle Nutzer **oder** pro Nutzer Secret **`github_pat`** mit JSON `{"token":"ghp_…"}` bzw. `github_pat_…` (überschreibt Env). Nur **read-only**-Scopes / Fine-grained PAT empfohlen.
+- **Tools:** **`github_search_code`**, **`github_search_issues`**, **`github_get_file`**, **`github_list_pull_requests`**, **`github_get_issue`** — siehe `get_tool_help`.
+
+### Kalender ICS (`plugin calendar_ics`)
+
+- **User-Secrets** (gleiches JSON, der Agent probiert **`google_calendar`** zuerst, sonst **`calendar_ics`**):  
+  `{"ics_url":"https://…"}`
+  - **Google Kalender (ohne OAuth):** [calendar.google.com](https://calendar.google.com) → Zahnrad → **Einstellungen** → gewünschter Kalender in der Liste → **„Geheime Adresse im iCal-Format“** kopieren (URL enthält `calendar.google.com/calendar/ical/…/basic.ics`). Per **`register_secrets`** mit `service_key_example: "google_calendar"` speichern (oder `calendar_ics`). **URL nicht in den Chat** — nur im Terminal/`curl`.
+  - **Nextcloud / andere:** öffentliche oder geheime ICS-HTTPS-URL → meist `calendar_ics`.
+- **Tool:** **`calendar_ics_list_events`** — `days_ahead` / `days_back` plus **`months_ahead`** / **`months_back`** (je Monat +31 Tage Fenster) für Überblick über mehrere Monate. Antwort enthält standardmäßig **`by_month`** (`YYYY-MM` → Anzahl + Titel). `include_by_month: false` zum Kürzen. Kleine Modelle (z. B. Nemotron) liefern manchmal falsch geschriebene Argumentnamen (`monthsahead` …) — das Plugin mappt die gängigen Varianten mit. Kein Schreiben; kein Google Calendar API / OAuth.
+
+### Notizen / KB (`plugin kb`)
+
+- Tabelle **`user_kb_notes`** (Migration 5): Volltext-Spalte + ILIKE-Suche.
+- **Tools:** **`kb_append_note`**, **`kb_search_notes`**, **`kb_read_note`** — persönlicher „second brain“ ohne Embeddings. Später optional **pgvector** ergänzen.
+
 ---
 
 ## Checkliste (geplant / optional)
 
 | Status | Tool / Paket | Hinweis |
 |--------|----------------|---------|
-| [ ] | GitHub Search / Repo-Read | Fine-grained PAT, nur nötige Scopes. |
+| [x] | GitHub Search / Repo-Read | Plugin `github`; Env `GITHUB_TOKEN` oder Secret `github_pat`. |
 | [x] | HTTP-Fetch + robots.txt + noindex | `deep_search` ohne Tavily; optionale Allowlist via Env. |
 | [ ] | Weitere Search-Provider (SerpAPI, …) | Optional ergänzen. |
 | [ ] | Lokale Dateien (read-only Mount) | Nur definierte Pfade. |
 | [ ] | Home Assistant / MQTT | Topic-Whitelist. |
-| [ ] | RAG / `search_kb` | pgvector, Chroma, … |
+| [ ] | RAG mit Embeddings (pgvector, …) | Aktuell: `kb_*` mit Postgres FTS; Embeddings optional. |
+| [ ] | Kalender CalDAV (Lesen/Schreiben) | Aktuell nur ICS-URL read-only. |
 
 *(Status hier anpassen, sobald ein Plugin gemerged und einmal gegen euren Stack getestet ist.)*
 
@@ -92,7 +121,9 @@ Empfehlung: **eine** `docker/.env` (von `.env.example` kopieren), **nicht** comm
 - **Heute:** meist nur Postgres/Ollama/Agent-Settings (`DATABASE_URL`, `OLLAMA_BASE_URL`, `AGENT_API_KEY`, …).
 - **Web-Suche:** optional `TAVILY_API_KEY` / `BRAVE_SEARCH_API_KEY`; ohne Keys nutzt das Plugin **[ddgs](https://pypi.org/project/ddgs/)** (Metasuche, u. a. Bing/DuckDuckGo-Backends; ohne Vertrag, Rate-Limits möglich). Abschalten: `AGENT_DISABLE_DDG_SEARCH=true`. Zusätzlich `AGENT_SEARCH_TIMEOUT`, `AGENT_SEARCH_MAX_RAW_CHARS`.
 - **deep_search ohne Tavily:** pro Treffer optional **HTTP-GET** der URL, nur wenn `robots.txt` für `AGENT_FETCH_USER_AGENT` (Default: `JetpackAgentLayer/…`) **kein** `Disallow` setzt; sonst `fetch_status=robots_disallowed`, kein Abruf. **`AGENT_ROBOTS_STRICT=true`:** wenn `robots.txt` nicht lesbar ist, wird **nicht** gefetcht (Default: in dem Fall wie „keine Regeln“ behandelt). **`AGENT_DISABLE_FETCH_DEEP=true`:** nur Snippets. **`AGENT_FETCH_MAX_BYTES`:** max. Antwortgröße (Default 2 MB). **`AGENT_ROBOTS_CACHE_TTL`:** Cache für `robots.txt` pro Origin (Sekunden). Loopback/Link-Local/Metadata-Hosts werden nicht abgerufen (Basis-SSRF-Schutz). **`AGENT_RESPECT_META_ROBOTS`** (Default `true`): bei **`X-Robots-Tag`** oder **`<meta name="robots" content="…">`** mit **`noindex`** oder **`none`** wird **kein** `raw_content` geliefert (`fetch_status` z. B. `x_robots_noindex` / `meta_robots_noindex`). **`AGENT_FETCH_DOMAIN_ALLOWLIST`:** wenn gesetzt (kommagetrennte Hostnamen), nur noch diese Hosts und ihre Subdomains — alles andere `blocked_allowlist` (reduziert SSRF + Scope).
-- **Später (Beispiele):** `GITHUB_TOKEN=…`, `SERPAPI_API_KEY=…` — im jeweiligen Plugin aus `os.environ` lesen.
+- **GitHub:** `GITHUB_TOKEN` in `docker/.env` (siehe `.env.example`) **oder** Nutzer registriert `github_pat` per `register_secrets`.
+- **Kalender:** kein Env — User-Secret `google_calendar` oder `calendar_ics` mit `{"ics_url":"https://…"}` (Google: geheime iCal-Adresse).
+- **Weitere Beispiele:** `SERPAPI_API_KEY=…` — im jeweiligen Plugin aus `os.environ` lesen.
 
 Für Produktion alternativ **NixOS sops-nix** / Secrets-Store statt flacher `.env`.
 

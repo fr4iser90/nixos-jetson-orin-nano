@@ -12,7 +12,7 @@ from .. import db
 from .. import identity
 from ..registry import get_registry
 
-__version__ = "1.4.7"
+__version__ = "1.5.0"
 PLUGIN_ID = "meta"
 
 
@@ -116,6 +116,15 @@ def register_secrets(arguments: dict[str, Any]) -> str:
     base = config.PUBLIC_BASE_URL or f"http://127.0.0.1:{config.HTTP_EXAMPLE_PORT}"
     if raw_svc == "gmail":
         secret_blob = '{"email":"du@gmail.com","app_password":"DEIN_APP_PASSWORT"}'
+    elif raw_svc == "github_pat":
+        secret_blob = '{"token":"DEIN_GITHUB_PAT_ODER_github_pat_xxx"}'
+    elif raw_svc == "calendar_ics":
+        secret_blob = '{"ics_url":"https://DEINE_CLOUD/.../calendar.ics"}'
+    elif raw_svc == "google_calendar":
+        secret_blob = (
+            '{"ics_url":"https://calendar.google.com/calendar/ical/DEINE_MAIL%40gmail.com/'
+            'private-XXXX/basic.ics"}'
+        )
     else:
         secret_blob = "DEIN_SECRET_TEXT"
     body_str = json.dumps(
@@ -141,6 +150,40 @@ def register_secrets(arguments: dict[str, Any]) -> str:
             + " --arg sk gmail --arg e 'DEINE@gmail.com' --arg p 'DEIN_APP_PASSWORT' "
             + "'{otp:$o, service_key:$sk, secret: ({email:$e, app_password:$p} | tojson)}')\""
         )
+    elif raw_svc == "github_pat":
+        jq_hint = (
+            "Eine Zeile: --arg t = Fine-grained PAT oder klassisch ghp_… (OTP schon in --arg o).\n"
+            "curl -sS -X POST "
+            + shlex.quote(url)
+            + " -H 'Content-Type: application/json' "
+            + '-d "$(jq -nc --arg o '
+            + shlex.quote(otp)
+            + " --arg sk github_pat --arg t 'DEIN_GITHUB_PAT' "
+            + "'{otp:$o, service_key:$sk, secret: ({token:$t} | tojson)}')\""
+        )
+    elif raw_svc == "calendar_ics":
+        jq_hint = (
+            "Eine Zeile: --arg u = HTTPS-ICS-URL (Nextcloud Export-Link o. ä.; OTP in --arg o).\n"
+            "curl -sS -X POST "
+            + shlex.quote(url)
+            + " -H 'Content-Type: application/json' "
+            + '-d "$(jq -nc --arg o '
+            + shlex.quote(otp)
+            + " --arg sk calendar_ics --arg u 'https://DEINE_CLOUD/.../export' "
+            + "'{otp:$o, service_key:$sk, secret: ({ics_url:$u} | tojson)}')\""
+        )
+    elif raw_svc == "google_calendar":
+        jq_hint = (
+            "Google: In calendar.google.com → Einstellungen → Kalender → „Geheime Adresse im iCal-Format“ kopieren; "
+            "in --arg u **eine Zeile** einfügen (OTP in --arg o).\n"
+            "curl -sS -X POST "
+            + shlex.quote(url)
+            + " -H 'Content-Type: application/json' "
+            + '-d "$(jq -nc --arg o '
+            + shlex.quote(otp)
+            + " --arg sk google_calendar --arg u 'https://calendar.google.com/calendar/ical/.../basic.ics' "
+            + "'{otp:$o, service_key:$sk, secret: ({ics_url:$u} | tojson)}')\""
+        )
 
     out: dict[str, Any] = {
         "ok": True,
@@ -160,6 +203,21 @@ def register_secrets(arguments: dict[str, Any]) -> str:
                 "Alternativ Platzhalter in `curl_bash` ersetzen (lokal — nie in den Chat).",
             ]
             if raw_svc == "gmail"
+            else [
+                "Befehl `curl_bash` ist **eine Zeile**; oder `jq_register_example_de` mit `--arg t` = GitHub PAT.",
+                "Nur lokal ausführen; Token nie in den Chat.",
+            ]
+            if raw_svc == "github_pat"
+            else [
+                "Befehl `curl_bash` eine Zeile; oder `jq_register_example_de` mit `--arg u` = HTTPS-ICS-URL.",
+                "ICS-URL von Nextcloud/Google „Secret address in iCal format“ o. ä.; kein localhost.",
+            ]
+            if raw_svc == "calendar_ics"
+            else [
+                "Google Kalender: „Geheime Adresse im iCal-Format“ aus den Kalendereinstellungen kopieren.",
+                "Befehl `curl_bash` eine Zeile; oder `jq_register_example_de` mit `--arg u` = diese https-URL (nie in den Chat posten).",
+            ]
+            if raw_svc == "google_calendar"
             else [
                 "Befehl `curl_bash` im Terminal einfügen und ausführen (eine Zeile).",
                 "Vorher nur den `secret`-Wert im JSON durch den echten Token/Passwort-Text ersetzen (lokal — nie in den Chat).",
@@ -185,7 +243,7 @@ def register_secrets(arguments: dict[str, Any]) -> str:
 
 
 def secrets_help(arguments: dict[str, Any]) -> str:
-    """Return help: points to register_secrets (OTP) + legacy curl for list/delete / header POST."""
+    """Static help for user secrets: OTP only via register_secrets; no OTP is minted here."""
     raw_svc = (arguments.get("service_key_example") or "email_imap").strip().lower()
     if not _SERVICE_KEY_SAFE.fullmatch(raw_svc):
         raw_svc = "email_imap"
@@ -198,89 +256,70 @@ def secrets_help(arguments: dict[str, Any]) -> str:
     resolved_sub = db.user_external_sub(uid)
     user_value = resolved_sub if resolved_sub is not None else "DEINE_WEBUI_USER_ID"
 
-    bearer_line = '  -H "Authorization: Bearer $AGENT_API_KEY" \\\n'
-    curl_post_ready_lines = [
-        f'curl -sS -X POST "{base}/v1/user/secrets" \\\n',
-    ]
-    if config.OPTIONAL_API_KEY:
-        curl_post_ready_lines.append(bearer_line)
-    curl_post_ready_lines.extend(
-        [
-            f'  -H "{user_hdr}: {user_value}" \\\n',
-            f'  -H "Content-Type: application/json" \\\n',
-            f"  -d '{{\"service_key\":\"{raw_svc}\",\"secret\":\"HIER_GMAIL_APP_PASSWORT_ODER_TOKEN\"}}'",
-        ]
-    )
-    curl_post_ready = "".join(curl_post_ready_lines)
-
-    curl_list_ready_lines = [f'curl -sS "{base}/v1/user/secrets" \\\n']
-    if config.OPTIONAL_API_KEY:
-        curl_list_ready_lines.append(bearer_line)
-    curl_list_ready_lines.append(f'  -H "{user_hdr}: {user_value}"')
-    curl_list_ready = "".join(curl_list_ready_lines)
-
-    curl_del_ready_lines = [
-        f'curl -sS -X DELETE "{base}/v1/user/secrets/{raw_svc}" \\\n',
-    ]
-    if config.OPTIONAL_API_KEY:
-        curl_del_ready_lines.append(bearer_line)
-    curl_del_ready_lines.append(f'  -H "{user_hdr}: {user_value}"')
-    curl_del_ready = "".join(curl_del_ready_lines)
-
     hints: list[str] = [
-        "**Empfohlen:** Tool `register_secrets` — fertiger `curl` mit OTP, nur noch App-Passwort ersetzen.",
-        "Legacy: `curl_post_ready` braucht User-Header (vorausgefüllt) "
-        + ("und Bearer `$AGENT_API_KEY` (Open WebUI / docker `.env`)." if config.OPTIONAL_API_KEY else "(kein AGENT_API_KEY am Server)."),
-        "Listen/Löschen über GET/DELETE `/v1/user/secrets` — gleiche Header; Betreiber: siehe TOOLS.md.",
+        "Neues Secret speichern: **nur** Tool `register_secrets` — in der Antwort stehen `curl_bash` und ggf. `jq_register_example_de` (OTP ist schon eingebaut).",
+        "Dieses Tool (`secrets_help`) erzeugt **kein** OTP und keinen curl — nur Erklärung.",
+        "Gespeicherte `service_key`-Namen auflisten oder einen Key löschen: HTTP `GET`/`DELETE` `/v1/user/secrets` mit denselben User-Headern wie der Chat (optional Bearer `AGENT_API_KEY`) — siehe TOOLS.md.",
     ]
     if topic in ("email", "imap", "mail", "gmail"):
         hints.append("Gmail: Google-Konto → App-Passwort; `service_key` z. B. `gmail` oder `email_imap`.")
+    if topic in ("github", "gh", "pat"):
+        hints.append(
+            "GitHub: `service_key` `github_pat` — JSON `{\"token\":\"…\"}` oder Operator setzt `GITHUB_TOKEN` in docker/.env für alle Nutzer."
+        )
+    if topic in ("calendar", "ics", "caldav", "nextcloud"):
+        hints.append(
+            "Kalender read-only: `calendar_ics` oder `google_calendar` mit JSON `{\"ics_url\":\"https://…\"}` — "
+            "Google: Einstellungen → geheime iCal-Adresse (`calendar.google.com/.../basic.ics`)."
+        )
+    if topic in ("google", "gcal", "google_calendar"):
+        hints.append(
+            "Google Kalender: `register_secrets` mit `service_key_example: \"google_calendar\"`; Secret = iCal-URL aus den Google-Kalendereinstellungen."
+        )
 
     return json.dumps(
         {
             "ok": True,
+            "otp_only_from_register_secrets_de": (
+                "Ein **OTP** und der fertige **`curl_bash`** kommen **ausschließlich** aus der Tool-Antwort von "
+                "`register_secrets`. **`secrets_help` ruft das Backend nicht an** und erzeugt **kein** OTP."
+            ),
             "when_backend_emits_otp_de": (
-                "Das Backend erzeugt ein OTP **nur** in der **Tool-Antwort** von `register_secrets` "
-                "(Feld `curl_bash` enthält OTP + URL). `secrets_help` erzeugt **kein** OTP — es ist nur Hilfstext. "
                 "Wenn dein Modell keine `tool_calls` sendet (Log z. B. „no tool_calls and content fallback missed“), "
-                "wird **kein** Tool ausgeführt → **kein** OTP. Dann größeres Modell mit Tool-Calling nutzen oder "
+                "wird `register_secrets` nicht ausgeführt → **kein** OTP. Dann größeres Modell mit Tool-Calling nutzen oder "
                 "`AGENT_CONTENT_TOOL_FALLBACK`/Prompt anpassen."
             ),
             "gmail_save_use_this_tool": "register_secrets",
             "gmail_save_example_args": {"service_key_example": "gmail"},
+            "google_calendar_save_example_args": {"service_key_example": "google_calendar"},
             "service_key_example": raw_svc,
             "base_url_used": base,
             "user_header": user_hdr,
             "resolved_user_id": uid,
             "resolved_external_sub": user_value,
             "for_llm_de": (
-                "Neues Secret (Gmail usw.) speichern: **zuerst** `register_secrets` mit passendem "
-                "`service_key_example` (z. B. gmail) aufrufen und dem Nutzer **nur** `curl_bash` aus dieser Antwort geben. "
-                "**Nicht** selbst `curl` mit `DEIN_AGENT_API_KEY` erfinden; **niemals** die Open-WebUI-User-ID in "
-                "`Authorization: Bearer` setzen (Bearer = nur `AGENT_API_KEY`, falls der Server einen verlangt — OTP-Flow braucht keinen)."
+                "Neues Secret speichern: **nur** `register_secrets` mit passendem `service_key_example` "
+                "(gmail, google_calendar, github_pat, …). Dem Nutzer **nur** `curl_bash` / `jq_register_example_de` "
+                "aus **dieser** Antwort geben — nichts erfinden. Klartext-Secrets und iCal-URLs **nie** in den Chat."
             ),
             "common_mistakes_de": [
-                "Falsch: `Authorization: Bearer` = WebUI-User-ID — die steht nur im Header "
-                f"`{user_hdr}` (hier schon `{user_value}` in `curl_*_ready`).",
-                "Falsch: `echo \"curl …\"` — Nutzer soll den echten `curl` aus `register_secrets` → `curl_bash` kopieren.",
+                "Falsch: `secrets_help` aufrufen und erwarten, dass ein OTP oder curl erscheint.",
+                "Falsch: Geheime iCal-URL oder Passwörter in den Chat schreiben — nur lokal im Terminal im curl/jq.",
             ],
             "preferred_flow_de": (
-                "Modell soll `register_secrets` aufrufen — Nutzer kopiert `curl_bash` und ersetzt nur "
-                "`DEIN_GMAIL_APP_PASSWORT`. Kein gemeinsamer API-Key für Endnutzer nötig."
+                "`register_secrets` → Nutzer führt `curl_bash` (eine Zeile) lokal aus → HTTP-Antwort `stored:true`. "
+                "Danach z. B. `calendar_ics_list_events` für Google-Kalender."
             ),
             "steps_de": [
-                "`register_secrets` mit z. B. `service_key_example: \"gmail\"` aufrufen.",
-                "Aus der Antwort `curl_bash` kopieren, Passwort-Platzhalter lokal ersetzen, im Terminal ausführen.",
+                "Tool `register_secrets` mit JSON-Argumenten aufrufen, z. B. "
+                '`{"service_key_example":"google_calendar"}` oder `{"service_key_example":"gmail"}`.',
+                "Aus der **Tool-Antwort** `curl_bash` oder `jq_register_example_de` kopieren, Platzhalter lokal ersetzen, ausführen.",
+                "Bei Google-Kalender: in `secret` die komplette https-URL (`…/basic.ics`) einsetzen (nur im Terminal).",
             ],
-            "curl_post_ready": curl_post_ready,
-            "curl_list_ready": curl_list_ready,
-            "curl_delete_ready": curl_del_ready,
-            "curl_post": curl_post_ready,
-            "curl_list": curl_list_ready,
-            "curl_del": curl_del_ready,
-            "aliases_note_de": (
-                "`curl_post` / `curl_list` / `curl_del` = gleicher Text wie `curl_*_ready` (Legacy-Namen). "
-                "Neu speichern: `register_secrets` (OTP)."
+            "list_delete_note_de": (
+                "Gespeicherte Keys auflisten oder löschen: REST `GET` bzw. `DELETE /v1/user/secrets` "
+                "mit User-Header wie beim Chat; bei gesetztem `AGENT_API_KEY` Header "
+                "`Authorization: Bearer <AGENT_API_KEY>`. Details: TOOLS.md."
             ),
             "hints": hints,
         },
@@ -343,7 +382,8 @@ TOOLS: list[dict[str, Any]] = [
                     "service_key_example": {
                         "type": "string",
                         "description": (
-                            "Logical name for this secret (lowercase [a-z0-9._-]), e.g. gmail, email_imap, github_pat"
+                            "Logical name for this secret (lowercase [a-z0-9._-]), "
+                            "e.g. gmail, github_pat, calendar_ics, google_calendar, email_imap"
                         ),
                     },
                     "ttl_seconds": {
@@ -359,10 +399,10 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "secrets_help",
             "description": (
-                "Help for user secrets: overview, list/delete curl templates, and legacy header-based POST. "
-                "Does NOT mint an OTP. To save a new secret, call register_secrets first and give the user curl_bash from that response. "
-                "NEVER tell the user to put Open WebUI user id in Authorization Bearer (Bearer is AGENT_API_KEY only when the server uses it). "
-                "Returns curl_list_ready / curl_delete_ready and hints in common_mistakes_de / for_llm_de."
+                "Static help for user secrets: explains that OTP and curl_bash come ONLY from register_secrets — "
+                "this tool does NOT mint an OTP. To save Gmail, google_calendar, github_pat, etc., the model must "
+                "call register_secrets and pass the returned curl_bash to the user. "
+                "Returns steps_de, google_calendar_save_example_args, list_delete_note_de (REST for list/delete), hints."
             ),
             "parameters": {
                 "type": "object",
@@ -370,13 +410,15 @@ TOOLS: list[dict[str, Any]] = [
                     "service_key_example": {
                         "type": "string",
                         "description": (
-                            "Example service_key for legacy POST body (lowercase [a-z0-9._-]), "
-                            "e.g. email_imap, github_pat, brave_api"
+                            "Example service_key name for hints only (lowercase [a-z0-9._-]), "
+                            "e.g. gmail, google_calendar, github_pat"
                         ),
                     },
                     "topic": {
                         "type": "string",
-                        "description": "Optional hint: email, imap, mail, gmail, github, or generic",
+                        "description": (
+                            "Optional hint: email, imap, mail, gmail, github, google, gcal, calendar, ics, or generic"
+                        ),
                     },
                 },
             },

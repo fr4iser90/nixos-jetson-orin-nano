@@ -178,6 +178,31 @@ MIGRATIONS: list[tuple[int, str]] = [
           WHERE used_at IS NULL;
         """,
     ),
+    (
+        5,
+        """
+        CREATE TABLE IF NOT EXISTS user_kb_notes (
+          id BIGSERIAL PRIMARY KEY,
+          tenant_id BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          title TEXT NOT NULL DEFAULT '',
+          body TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          search_tsv tsvector GENERATED ALWAYS AS (
+            to_tsvector(
+              'simple',
+              coalesce(title, '') || ' ' || coalesce(body, '')
+            )
+          ) STORED
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_user_kb_notes_tenant_user_created
+          ON user_kb_notes (tenant_id, user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_user_kb_notes_tsv
+          ON user_kb_notes USING GIN (search_tsv);
+        """,
+    ),
 ]
 
 
@@ -190,7 +215,12 @@ def pool() -> ConnectionPool:
 def init_pool() -> None:
     global _pool
     if not config.DATABASE_URL:
-        raise RuntimeError("DATABASE_URL is required (PostgreSQL)")
+        raise RuntimeError(
+            "PostgreSQL connection missing: DATABASE_URL is empty and could not be built from "
+            "POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB (and PGHOST defaulting to postgres). "
+            "Fix: set DATABASE_URL in docker/.env (see .env.example), or pass the same POSTGRES_* "
+            "variables into the agent-layer container as for the postgres service, then restart."
+        )
     if _pool is not None:
         return
     _pool = ConnectionPool(
@@ -535,3 +565,118 @@ def user_secret_register_with_otp(otp_raw: str, service_key: str, plaintext: str
                 (uid, service_key, ct),
             )
         conn.commit()
+
+
+def kb_note_append(title: str, body: str) -> int:
+    tenant_id, user_id = identity.get_identity()
+    title = (title or "").strip()
+    body = (body or "").strip()
+    if not body:
+        raise ValueError("body is required")
+    with pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO user_kb_notes (title, body, tenant_id, user_id)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+                """,
+                (title, body, tenant_id, user_id),
+            )
+            row = cur.fetchone()
+            nid = int(row[0])
+        conn.commit()
+    return nid
+
+
+def _ilike_contains(s: str) -> str:
+    esc = s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{esc}%"
+
+
+def kb_note_search(query: str, limit: int = 20) -> list[dict[str, Any]]:
+    tenant_id, user_id = identity.get_identity()
+    q = (query or "").strip()
+    if not q:
+        return []
+    limit = max(1, min(int(limit or 20), 50))
+    pat = _ilike_contains(q)
+    sql_full = """
+                SELECT id, title, left(body, 500) AS body_excerpt, created_at
+                FROM user_kb_notes
+                WHERE tenant_id = %s AND user_id = %s
+                  AND (
+                    title ILIKE %s ESCAPE '\\'
+                    OR body ILIKE %s ESCAPE '\\'
+                    OR search_tsv @@ websearch_to_tsquery('simple', %s)
+                  )
+                ORDER BY created_at DESC
+                LIMIT %s
+                """
+    sql_ilike = """
+                SELECT id, title, left(body, 500) AS body_excerpt, created_at
+                FROM user_kb_notes
+                WHERE tenant_id = %s AND user_id = %s
+                  AND (
+                    title ILIKE %s ESCAPE '\\'
+                    OR body ILIKE %s ESCAPE '\\'
+                  )
+                ORDER BY created_at DESC
+                LIMIT %s
+                """
+    with pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            try:
+                cur.execute(
+                    sql_full,
+                    (tenant_id, user_id, pat, pat, q, limit),
+                )
+            except psycopg.Error:
+                logger.debug("kb_note_search fts fallback for query %r", q[:80], exc_info=True)
+                conn.rollback()
+                cur.execute(
+                    sql_ilike,
+                    (tenant_id, user_id, pat, pat, limit),
+                )
+            rows = cur.fetchall()
+        conn.commit()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        out.append(
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "body_excerpt": r["body_excerpt"],
+                "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+            }
+        )
+    return out
+
+
+def kb_note_get(note_id: int, max_body_chars: int = 12000) -> dict[str, Any] | None:
+    tenant_id, user_id = identity.get_identity()
+    max_body_chars = max(500, min(int(max_body_chars or 12000), 100_000))
+    with pool().connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT id, title, body, created_at, updated_at
+                FROM user_kb_notes
+                WHERE id = %s AND tenant_id = %s AND user_id = %s
+                """,
+                (note_id, tenant_id, user_id),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    if not row:
+        return None
+    body = str(row["body"] or "")
+    if len(body) > max_body_chars:
+        body = body[:max_body_chars] + "\n… (truncated)"
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "body": body,
+        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+        "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+    }

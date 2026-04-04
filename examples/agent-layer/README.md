@@ -52,8 +52,7 @@ Im Verzeichnis `docker/`:
 cp .env.example .env
 ```
 
-**PostgreSQL** (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) und der Agent lesen die Werte aus **dieser** `.env` (Compose-Interpolation).  
-`DATABASE_URL` für den Agent wird **automatisch** aus denselben drei Variablen gebaut, sofern du `DATABASE_URL` nicht explizit setzt (bei Sonderzeichen im Passwort: `DATABASE_URL` manuell setzen und Passwort URL-encoden).
+**PostgreSQL:** Entweder **`DATABASE_URL`** in **`.env`** setzen (siehe `.env.example`) **oder** nur **`POSTGRES_USER`**, **`POSTGRES_PASSWORD`**, **`POSTGRES_DB`** wie beim `postgres`-Service — der Agent baut die URL intern (`PGHOST=postgres` setzt Compose). Passwort mit Sonderzeichen: in `DATABASE_URL` URL-encoden.
 
 Trage **keine Secrets** in `.env.example` ein; nur in **`.env`** (Root-`.gitignore`: `examples/agent-layer/docker/.env`).
 

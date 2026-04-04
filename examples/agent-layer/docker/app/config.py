@@ -1,4 +1,5 @@
 import os
+from urllib.parse import quote_plus
 
 
 def _env_bool(key: str, default: bool) -> bool:
@@ -17,8 +18,32 @@ SYSTEM_PROMPT_EXTRA = os.environ.get("AGENT_SYSTEM_PROMPT", "").strip()
 # If Ollama returns no tool_calls but JSON tool intent in message content (e.g. Nemotron), parse and run.
 CONTENT_TOOL_FALLBACK = _env_bool("AGENT_CONTENT_TOOL_FALLBACK", True)
 
+def _resolve_database_url() -> str:
+    """
+    Prefer explicit DATABASE_URL. If unset/empty, build from POSTGRES_* / PGHOST (same as compose postgres service),
+    so the agent starts without duplicating the full URL in compose.yaml.
+    """
+    direct = os.environ.get("DATABASE_URL", "").strip()
+    if direct:
+        return direct
+    user = (os.environ.get("POSTGRES_USER") or "agent").strip()
+    dbn = (os.environ.get("POSTGRES_DB") or "agent").strip()
+    if not user or not dbn:
+        return ""
+    raw_pw = os.environ.get("POSTGRES_PASSWORD")
+    password = "agent" if raw_pw is None else str(raw_pw)
+    host = (
+        os.environ.get("PGHOST") or os.environ.get("POSTGRES_HOST") or "postgres"
+    ).strip() or "postgres"
+    port = (os.environ.get("PGPORT") or "5432").strip() or "5432"
+    return (
+        f"postgresql://{quote_plus(user)}:{quote_plus(password)}"
+        f"@{host}:{port}/{quote_plus(dbn)}"
+    )
+
+
 # postgresql://USER:PASSWORD@HOST:5432/DBNAME
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+DATABASE_URL = _resolve_database_url()
 
 # Optional directory of extra *.py plugins (same TOOLS/HANDLERS contract as app.plugins).
 PLUGINS_EXTRA_DIR = os.environ.get("AGENT_PLUGINS_EXTRA_DIR", "").strip()

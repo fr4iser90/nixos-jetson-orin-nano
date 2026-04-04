@@ -44,7 +44,7 @@ class UserSecretBody(BaseModel):
 
     @field_validator("secret", mode="before")
     @classmethod
-    def _coerce_secret_legacy(cls, v: Any) -> str:
+    def _coerce_secret_body(cls, v: Any) -> str:
         if isinstance(v, dict):
             return json.dumps(v, ensure_ascii=False)
         if isinstance(v, str):
@@ -63,7 +63,7 @@ class RegisterWithOtpBody(BaseModel):
     @field_validator("secret", mode="before")
     @classmethod
     def _coerce_secret(cls, v: Any) -> str:
-        """Allow JSON object in request body (curl-friendly); store as string like legacy POST."""
+        """Allow JSON object in request body (curl-friendly); store as canonical string."""
         if isinstance(v, dict):
             return json.dumps(v, ensure_ascii=False)
         if isinstance(v, str):

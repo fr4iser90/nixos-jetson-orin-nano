@@ -43,7 +43,12 @@ services:
       - "${AGENT_HTTP_PORT:-8088}:8080"
     environment:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-agent}:${POSTGRES_PASSWORD:-agent}@postgres:5432/${POSTGRES_DB:-agent}}
+      # DATABASE_URL in .env ODER (wie postgres-Service) POSTGRES_* — app/config.py baut die URL dann selbst.
+      DATABASE_URL: ${DATABASE_URL:-}
+      POSTGRES_USER: ${POSTGRES_USER:-agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agent}
+      POSTGRES_DB: ${POSTGRES_DB:-agent}
+      PGHOST: postgres
       AGENT_MAX_TOOL_ROUNDS: ${AGENT_MAX_TOOL_ROUNDS:-8}
       # Default in app: X-OpenWebUI-User-Id, X-Agent-User-Sub (override with comma-list)
       AGENT_USER_SUB_HEADER: ${AGENT_USER_SUB_HEADER:-}
