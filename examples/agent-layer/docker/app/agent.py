@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from json import JSONDecoder
 from typing import Any
@@ -24,6 +25,69 @@ from .tool_routing import (
 from .tools import run_tool
 
 logger = logging.getLogger(__name__)
+
+
+def _chat_model_matches_weak_substrings(model_id: str | None) -> bool:
+    if not model_id:
+        return False
+    subs = config.AGENT_WEAK_TOOL_MODEL_SUBSTRINGS
+    if not subs:
+        return False
+    ml = str(model_id).lower()
+    return any(s in ml for s in subs)
+
+
+def _http_error_recovery_hint(
+    tool_name: str, result: str, *, chat_model: str | None = None
+) -> str | None:
+    if not config.AGENT_TOOL_HTTP_ERROR_RECOVERY_HINTS:
+        return None
+    if len(result) > 8000:
+        return None
+    rl = result.lower()
+    markers = (
+        "http error",
+        "bad request",
+        "401 unauthorized",
+        "403 forbidden",
+        "404 not found",
+        " 400 ",
+        "'400'",
+        '"400"',
+        "status 400",
+        "status 401",
+        "status 403",
+        "status 404",
+        "httpx",
+        "for url 'http",
+        'for url "http',
+    )
+    if not any(m in rl for m in markers):
+        return None
+    weak = _chat_model_matches_weak_substrings(chat_model)
+    if weak:
+        fix_strategy = (
+            "With this **small chat model**, prefer **`replace_tool`** with full `source` after you see the bug "
+            "(narrow `update_tool` patches are easy to get wrong). "
+        )
+    else:
+        fix_strategy = (
+            "For a **one-line API fix** (wrong query param, URL), **`update_tool`** is usually enough; "
+            "use **`replace_tool`** if you need a larger rewrite. "
+        )
+    return (
+        "The previous tool output suggests an HTTP/API failure. "
+        "Do not blame the API key first: **400 Bad Request** often means **wrong query parameters** "
+        "(e.g. OpenWeather `/data/2.5/weather` expects **`q`** for the place name, not `city`). "
+        "**401** more often means an invalid or missing key. "
+        + fix_strategy
+        + "Next steps: (1) **`read_tool`** the `.py` for this tool (use `openai_tool_name` "
+        f"{tool_name!r} or `filename`). (2) Optionally **`search_web`** for the vendor's current API docs. "
+        "(3) Apply the fix with **`replace_tool`** and/or **`update_tool`**; use **`https://`**. "
+        "(4) Or delegate to built-ins: **`invoke_registered_tool`**(`\"openweather_current\"`, "
+        "`{\"location\": \"…\"}`) / `openweather_forecast` from Python in an extra tool."
+    )
+
 
 # Substrings for keyword router when env lists are empty (conservative on "workspace").
 _DEFAULT_ROUTER_TOOL_SUBSTRINGS = [
@@ -176,6 +240,21 @@ def _coerce_params_dict(p: Any) -> dict[str, Any] | None:
     return None
 
 
+# JSON where the function name is under ``tool_name`` (Nemotron) instead of ``name`` / ``tool``.
+_CONTENT_META_TOOL_NAMES = frozenset(
+    {
+        "read_tool",
+        "replace_tool",
+        "create_tool",
+        "update_tool",
+        "rename_tool",
+        "list_tools",
+        "list_available_tools",
+        "get_tool_help",
+    }
+)
+
+
 def _parse_tool_intent_from_content(content: str) -> tuple[str, dict[str, Any]] | None:
     """
     Some models emit JSON like {\"tool\": \"<name>\", \"parameters\": {...}} in message content
@@ -186,6 +265,11 @@ def _parse_tool_intent_from_content(content: str) -> tuple[str, dict[str, Any]] 
         return None
     name: str | None = None
     params: dict[str, Any] | None = None
+    tnk = obj.get("tool_name")
+    if isinstance(tnk, str) and tnk.strip() in _CONTENT_META_TOOL_NAMES:
+        name = tnk.strip()
+        params = {k: v for k, v in obj.items() if k != "tool_name"}
+        return name, params
     if isinstance(obj.get("tool"), str):
         name = obj["tool"]
         p = obj.get("parameters")
@@ -207,6 +291,31 @@ def _parse_tool_intent_from_content(content: str) -> tuple[str, dict[str, Any]] 
     if not name or params is None:
         return None
     return name, params
+
+
+def _content_fallback_args_acceptable(name: str, params: dict[str, Any]) -> bool:
+    """Reject synthetic tool_calls that would no-op or loop (e.g. read_tool({}))."""
+    if name == "read_tool":
+        return any(str(params.get(k) or "").strip() for k in ("filename", "openai_tool_name", "tool_name", "name"))
+    if name == "replace_tool":
+        if not str(params.get("source") or "").strip():
+            return False
+        return any(str(params.get(k) or "").strip() for k in ("filename", "openai_tool_name", "tool_name", "name"))
+    if name == "update_tool":
+        if not str(params.get("old_string") or "").strip():
+            return False
+        return any(str(params.get(k) or "").strip() for k in ("filename", "openai_tool_name", "tool_name", "name"))
+    if name == "create_tool":
+        if str(params.get("source") or "").strip():
+            return True
+        return bool(str(params.get("tool_name") or "").strip() or str(params.get("name") or "").strip())
+    if name == "rename_tool":
+        return bool(str(params.get("old_filename") or "").strip()) and bool(
+            str(params.get("new_filename") or "").strip()
+        )
+    if name == "get_tool_help":
+        return bool(str(params.get("tool_name") or "").strip())
+    return True
 
 
 def _text_blobs_from_message(msg: dict[str, Any]) -> list[str]:
@@ -264,6 +373,13 @@ def _synthetic_tool_calls_from_message(
         name, params = parsed
         if name not in known:
             logger.debug("content tool JSON names unknown tool %r, ignoring", name)
+            continue
+        if not _content_fallback_args_acceptable(name, params):
+            logger.info(
+                "content tool fallback: reject %s with insufficient args %r (avoid empty read_tool loop)",
+                name,
+                params,
+            )
             continue
         tc = {
             "id": f"content-{uuid.uuid4().hex[:16]}",
@@ -413,6 +529,96 @@ def _tools_for_round(
     return tfr
 
 
+def _approx_text_chars_in_messages(messages: list[dict[str, Any]]) -> int:
+    return sum(sum(len(b) for b in _text_blobs_from_message(m)) for m in messages)
+
+
+def _redact_secrets_for_log(s: str) -> str:
+    """Best-effort masking for log previews (OpenWeather appid, Bearer tokens)."""
+    s = re.sub(r"(?i)appid=[A-Za-z0-9._-]+", "appid=***", s)
+    s = re.sub(r"(?i)bearer\s+[A-Za-z0-9._-]+", "Bearer ***", s)
+    return s
+
+
+def _log_ollama_round(
+    *,
+    round_i: int,
+    model: Any,
+    messages: list[dict[str, Any]],
+    tools_for_round: list[Any],
+    msg: dict[str, Any],
+    choice0: dict[str, Any],
+    tool_calls: list[Any] | None,
+    had_native_tool_calls: bool,
+) -> None:
+    if not config.AGENT_LOG_LLM_ROUNDS:
+        return
+    ctx_msgs = len(messages)
+    ctx_chars = _approx_text_chars_in_messages(messages)
+    large = ""
+    if ctx_chars >= config.AGENT_LOG_LARGE_CONTEXT_CHARS:
+        large = f" LARGE_CTX(>={config.AGENT_LOG_LARGE_CONTEXT_CHARS} chars)"
+    rt_names = [n for t in (tools_for_round or []) if (n := _tool_spec_name(t))]
+    syn = bool(tool_calls) and not had_native_tool_calls
+    if tool_calls:
+        call_names = [(tc.get("function") or {}).get("name") or "?" for tc in tool_calls]
+        logger.info(
+            "llm round %d/%d model=%s reply=TOOLS calls=%s content_json_fallback=%s "
+            "ctx_msgs=%d ctx_text_chars~=%d ollama_tool_defs=%d tool_names=%s%s",
+            round_i + 1,
+            config.MAX_TOOL_ROUNDS,
+            model,
+            call_names,
+            syn,
+            ctx_msgs,
+            ctx_chars,
+            len(rt_names),
+            rt_names,
+            large,
+        )
+        return
+    cap = config.AGENT_LOG_ASSISTANT_PREVIEW_CHARS
+    blobs = list(_text_blobs_from_message(msg))
+    for key in ("thought", "reasoning", "thinking"):
+        v = choice0.get(key)
+        if isinstance(v, str) and v.strip():
+            blobs.append(v)
+    joined = "\n".join(blobs)
+    any_text = bool(joined.strip())
+    if cap > 0:
+        preview = _redact_secrets_for_log(joined[:cap])
+    else:
+        preview = "(set AGENT_LOG_ASSISTANT_PREVIEW_CHARS>0 for redacted snippet)"
+    if not any_text:
+        logfn = logger.warning if rt_names else logger.info
+        logfn(
+            "llm round %d/%d model=%s reply=EMPTY_NO_TOOLS content_json_fallback=%s "
+            "ctx_msgs=%d ctx_text_chars~=%d ollama_tool_defs=%d%s",
+            round_i + 1,
+            config.MAX_TOOL_ROUNDS,
+            model,
+            syn,
+            ctx_msgs,
+            ctx_chars,
+            len(rt_names),
+            large,
+        )
+        return
+    logger.info(
+        "llm round %d/%d model=%s reply=TEXT_NO_TOOLS content_json_fallback=%s "
+        "ctx_msgs=%d ctx_text_chars~=%d ollama_tool_defs=%d preview=%r%s",
+        round_i + 1,
+        config.MAX_TOOL_ROUNDS,
+        model,
+        syn,
+        ctx_msgs,
+        ctx_chars,
+        len(rt_names),
+        preview,
+        large,
+    )
+
+
 async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
     # stream flag is ignored here; Ollama always gets stream=false. Caller may wrap JSON as SSE.
     model = body.get("model")
@@ -466,6 +672,14 @@ async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
                 payload["tools"] = tools_for_round
 
             resp = await client.post(url, json=payload, headers=headers)
+            if resp.is_error:
+                err_body = (resp.text or "")[:4000]
+                logger.error(
+                    "Ollama chat/completions failed: status=%s model=%s body=%s",
+                    resp.status_code,
+                    model,
+                    err_body or "(empty)",
+                )
             resp.raise_for_status()
             data = resp.json()
 
@@ -474,7 +688,9 @@ async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(raw_msg, dict):
                 raw_msg = {}
             msg = dict(raw_msg)
-            tool_calls = msg.get("tool_calls")
+            raw_tc = msg.get("tool_calls")
+            had_native_tool_calls = isinstance(raw_tc, list) and len(raw_tc) > 0
+            tool_calls = raw_tc if had_native_tool_calls else None
             if not tool_calls:
                 tool_calls = _synthetic_tool_calls_from_message(
                     msg, choice0, allowed_tool_names=allowed_names
@@ -483,27 +699,18 @@ async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
                     msg["tool_calls"] = tool_calls
                     choice0["message"] = msg
 
+            _log_ollama_round(
+                round_i=round_i,
+                model=model,
+                messages=messages,
+                tools_for_round=tools_for_round,
+                msg=msg,
+                choice0=choice0 if isinstance(choice0, dict) else {},
+                tool_calls=tool_calls if isinstance(tool_calls, list) else None,
+                had_native_tool_calls=had_native_tool_calls,
+            )
+
             if not tool_calls:
-                if tools_for_round:
-                    blobs = _text_blobs_from_message(msg)
-                    if choice0:
-                        for key in ("thought", "reasoning", "thinking"):
-                            v = choice0.get(key)
-                            if isinstance(v, str) and v.strip():
-                                blobs.append(v)
-                    any_text = any(b.strip() for b in blobs)
-                    if any_text:
-                        logger.debug(
-                            "no tool_calls; assistant replied with text (model=%s keys=%s)",
-                            model,
-                            list(msg.keys()),
-                        )
-                    else:
-                        logger.warning(
-                            "no tool_calls and content fallback missed (empty reply; model=%s keys=%s)",
-                            model,
-                            list(msg.keys()),
-                        )
                 return data
 
             # Append assistant message (includes tool_calls, and content if any)
@@ -545,6 +752,14 @@ async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
                         "content": result,
                     }
                 )
+                recovery = _http_error_recovery_hint(name, result, chat_model=str(model))
+                if recovery:
+                    messages.append({"role": "system", "content": recovery})
 
-        logger.warning("max tool rounds (%s) exceeded", config.MAX_TOOL_ROUNDS)
+        logger.warning(
+            "max tool rounds (%s) exceeded ctx_msgs=%d ctx_text_chars~=%d",
+            config.MAX_TOOL_ROUNDS,
+            len(messages),
+            _approx_text_chars_in_messages(messages),
+        )
         return data

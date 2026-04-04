@@ -43,6 +43,8 @@ services:
     volumes:
       # create_tool / Default AGENT_TOOLS_EXTRA_DIR=/data/tools — ohne Mount existiert der Pfad nicht.
       - ./extra_tools:/data/tools:rw
+      # Backups (replace_tool/update_tool): Default /data/tool_backups liegt NICHT auf diesem Mount →
+      # in .env setzen: AGENT_TOOLS_BACKUP_DIR=/data/tools/.tool_backups (Ordner erscheint unter ./extra_tools/.tool_backups)
     # Optional read-only:  - ./extra_tools:/data/tools:ro
     # Optional workspace_* : - /path/on/host/project:/workspace:rw  + AGENT_WORKSPACE_ROOT=/workspace
     networks:

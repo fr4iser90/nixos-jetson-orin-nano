@@ -6,6 +6,13 @@ from urllib.parse import quote_plus
 logger = logging.getLogger(__name__)
 
 
+def tools_backup_directory() -> Path:
+    raw = (os.environ.get("AGENT_TOOLS_BACKUP_DIR") or "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path(DATA_DIR) / "tool_backups"
+
+
 def normalize_tool_mode(raw: str | None) -> str:
     s = (raw or "").strip().lower()
     if s == "default":
@@ -33,11 +40,18 @@ def _env_int(key: str, default: int) -> int:
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://ollama:11434").rstrip("/")
 MAX_TOOL_ROUNDS = _env_int("AGENT_MAX_TOOL_ROUNDS", 8)
 DATA_DIR = os.environ.get("AGENT_DATA_DIR", "/data")
+# Before replace_tool / update_tool / create_tool overwrite, copy prior .py here (UTC timestamp prefix).
+TOOLS_BACKUP_ENABLED = _env_bool("AGENT_TOOLS_BACKUP_ENABLED", True)
 OPTIONAL_API_KEY = os.environ.get("AGENT_API_KEY", "").strip()
 SYSTEM_PROMPT_EXTRA = os.environ.get("AGENT_SYSTEM_PROMPT", "").strip()
 
 # If Ollama returns no tool_calls but JSON tool intent in message content (e.g. Nemotron), parse and run.
 CONTENT_TOOL_FALLBACK = _env_bool("AGENT_CONTENT_TOOL_FALLBACK", True)
+
+# Per Ollama round: INFO log reply type (TOOLS vs TEXT), context size, optional assistant preview (redacted).
+AGENT_LOG_LLM_ROUNDS = _env_bool("AGENT_LOG_LLM_ROUNDS", True)
+AGENT_LOG_ASSISTANT_PREVIEW_CHARS = _env_int("AGENT_LOG_ASSISTANT_PREVIEW_CHARS", 0)
+AGENT_LOG_LARGE_CONTEXT_CHARS = _env_int("AGENT_LOG_LARGE_CONTEXT_CHARS", 120_000)
 
 # --- Tool routing (subset by mode; header X-Agent-Mode overrides) ---
 # full | tool_factory | workspace | default_chat (alias: default)
@@ -46,6 +60,8 @@ AGENT_TOOL_MODE = normalize_tool_mode(os.environ.get("AGENT_TOOL_MODE", "full"))
 AGENT_TOOL_MODE_TOOL_FACTORY_INCLUDES_HELP = _env_bool(
     "AGENT_TOOL_MODE_TOOL_FACTORY_INCLUDES_HELP", True
 )
+# When true: ``filter_tools_for_mode`` applies tool_factory / workspace / default_chat subsets (see ``tool_routing._filter_tools_subset_by_mode``). Default off = all tools to the LLM.
+AGENT_TOOL_SUBSET_BY_MODE = _env_bool("AGENT_TOOL_SUBSET_BY_MODE", False)
 # If no X-Agent-Mode / JSON agent_tool_mode: keyword substring match on last user message
 AGENT_TOOL_ROUTER_KEYWORDS_ENABLED = _env_bool("AGENT_TOOL_ROUTER_KEYWORDS_ENABLED", True)
 # Comma-separated case-insensitive substrings (empty = use built-in defaults in agent)
@@ -61,6 +77,11 @@ AGENT_TOOL_ROUTER_MODEL = (os.environ.get("AGENT_TOOL_ROUTER_MODEL") or "").stri
 # After workspace_* fails with "disabled", narrow remaining rounds to tool_factory tools
 AGENT_TOOL_RETRY_NARROW_TO_TOOL_FACTORY = _env_bool(
     "AGENT_TOOL_RETRY_NARROW_TO_TOOL_FACTORY", True
+)
+# After a tool returns text that looks like an HTTP client/API error, inject a short system hint
+# so the model can read_tool / search_web / replace_tool without the user (see TOOLS.md).
+AGENT_TOOL_HTTP_ERROR_RECOVERY_HINTS = _env_bool(
+    "AGENT_TOOL_HTTP_ERROR_RECOVERY_HINTS", True
 )
 
 # In tool_factory mode: if chat ``model`` id contains any substring (case-insensitive), drop listed tools.
@@ -196,7 +217,7 @@ WORKSPACE_MAX_READ_LINES = _env_int("AGENT_WORKSPACE_MAX_READ_LINES", 8000)
 CREATE_TOOL_MAX_BYTES = _env_int("AGENT_CREATE_TOOL_MAX_BYTES", 120_000)
 # When create_tool is called without ``source``, Ollama generates the module (same base URL as chat).
 CREATE_TOOL_CODEGEN_MODEL = (
-    os.environ.get("AGENT_CREATE_TOOL_CODEGEN_MODEL") or "qwen2.5-coder:3b"
+    os.environ.get("AGENT_CREATE_TOOL_CODEGEN_MODEL") or "qwen2.5-coder:7b"
 ).strip()
 CREATE_TOOL_CODEGEN_TIMEOUT = _env_int("AGENT_CREATE_TOOL_CODEGEN_TIMEOUT", 120)
 # Codegen prompt: allow httpx/urllib HTTP (keys only via os.environ — set in compose .env).

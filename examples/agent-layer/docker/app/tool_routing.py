@@ -7,6 +7,8 @@ import logging
 import re
 from typing import Any
 
+from . import config
+
 logger = logging.getLogger(__name__)
 
 # Built-in dynamic-tool tools (file under AGENT_TOOLS_EXTRA_DIR).
@@ -45,13 +47,20 @@ def _tool_name(entry: Any) -> str | None:
     return None
 
 
-def filter_tools_for_mode(
+def _filter_tools_subset_by_mode(
     tools: list[Any],
     mode: str,
     *,
     tool_factory_includes_help: bool,
 ) -> list[Any]:
-    """Return a filtered copy of OpenAI-style tool specs."""
+    """
+    Original mode-based “smart” filtering (subset of tools per ``agent_tool_mode``).
+
+    - ``full``: all tools
+    - ``tool_factory``: ``TOOL_FACTORY_CORE`` plus optional ``TOOL_INTROSPECTION``
+    - ``workspace``: only names starting with ``workspace_``
+    - ``default_chat``: all except factory core and ``workspace_*``
+    """
     m = normalize_mode(mode)
     if m == "full" or not tools:
         return list(tools)
@@ -77,6 +86,27 @@ def filter_tools_for_mode(
         else:
             out.append(spec)
     return out
+
+
+def filter_tools_for_mode(
+    tools: list[Any],
+    mode: str,
+    *,
+    tool_factory_includes_help: bool,
+) -> list[Any]:
+    """Forward either all tools or a mode subset (see ``AGENT_TOOL_SUBSET_BY_MODE``).
+
+    Default (``AGENT_TOOL_SUBSET_BY_MODE=false``): return the full merged tool list.
+
+    When subsetting is on, logic lives in ``_filter_tools_subset_by_mode`` (tool_factory /
+    workspace / default_chat). Weak-model stripping in ``agent.py`` is independent.
+    """
+    if config.AGENT_TOOL_SUBSET_BY_MODE:
+        return _filter_tools_subset_by_mode(
+            tools, mode, tool_factory_includes_help=tool_factory_includes_help
+        )
+    _ = (mode, tool_factory_includes_help)
+    return list(tools)
 
 
 def apply_weak_model_tool_strip(

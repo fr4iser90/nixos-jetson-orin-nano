@@ -6,6 +6,8 @@ import hashlib
 import json
 import logging
 import re
+import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ import httpx
 from app import config
 from app import tool_authoring
 from app.registry import get_registry, reload_registry
+from app.tool_name_hints import suggest_tool_names
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +143,12 @@ def resolve_extra_py_filename(*, extra_root: Path, hint: str) -> tuple[str | Non
                 "Use list_available_tools for names, list_tools for .py files; "
                 "openai_tool_name must match a tool defined in a file under the extra tool directory."
             ),
+            "suggestions": suggest_tool_names(get_registry(), h),
+            "read_tool_note": (
+                "read_tool only reads .py under AGENT_TOOLS_EXTRA_DIR. "
+                "Built-in tools (e.g. openweather_current) live in the image — use get_tool_help with that name, "
+                "not read_tool."
+            ),
         },
         ensure_ascii=False,
     )
@@ -219,6 +228,44 @@ def reject_replace_tool_confused_arguments(arguments: dict[str, Any]) -> str | N
             ensure_ascii=False,
         )
     return None
+
+
+def backup_extra_tool_before_write(dest: Path) -> str | None:
+    """
+    If enabled, copy the existing extra-tool file into ``AGENT_TOOLS_BACKUP_DIR`` (or
+    ``AGENT_DATA_DIR/tool_backups``) with a UTC timestamp prefix before overwriting.
+    """
+    if not config.TOOLS_BACKUP_ENABLED:
+        return None
+    if not dest.is_file():
+        return None
+    bdir = config.tools_backup_directory()
+    try:
+        bdir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.warning("tool_backups: mkdir %s failed: %s", bdir, e)
+        return None
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target = bdir / f"{ts}_{dest.name}"
+    try:
+        shutil.copy2(dest, target)
+        logger.info("tool_backups: saved previous %s -> %s", dest, target)
+        return str(target)
+    except OSError as e:
+        logger.warning("tool_backups: copy failed: %s", e)
+        return None
+
+
+def tool_write_extra_for_digest(backup_path: str | None) -> dict[str, Any] | None:
+    if not backup_path:
+        return None
+    return {
+        "backup_previous": backup_path,
+        "rollback_hint": (
+            "Previous revision saved before write. Restore: copy the backup file over the live module in "
+            "AGENT_TOOLS_EXTRA_DIR, then POST /v1/admin/reload-tools — or use replace_tool with source read from the backup."
+        ),
+    }
 
 
 def digest_reload_response(

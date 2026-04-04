@@ -6,10 +6,12 @@ import json
 from typing import Any, Callable
 
 from agent_tools.tool_factory._tool_factory_common import (
+    backup_extra_tool_before_write,
     coalesce_tool_file_target,
     digest_reload_response,
     extra_root_or_error,
     reject_update_tool_confused_arguments,
+    tool_write_extra_for_digest,
     validate_module_text,
 )
 
@@ -98,12 +100,15 @@ def update_tool(arguments: dict[str, Any]) -> str:
             ensure_ascii=False,
         )
 
+    backup_path = backup_extra_tool_before_write(dest)
     try:
         dest.write_text(updated, encoding="utf-8", newline="\n")
     except OSError as e:
         return json.dumps({"ok": False, "error": f"write failed: {e}"}, ensure_ascii=False)
 
-    body = json.loads(digest_reload_response(fn, dest))
+    body = json.loads(
+        digest_reload_response(fn, dest, extra=tool_write_extra_for_digest(backup_path))
+    )
     body["replacements"] = replaced
     return json.dumps(body, ensure_ascii=False)
 

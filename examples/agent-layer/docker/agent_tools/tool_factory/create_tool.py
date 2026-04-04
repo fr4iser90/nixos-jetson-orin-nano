@@ -9,11 +9,13 @@ from app import config
 from app import tool_authoring
 
 from agent_tools.tool_factory._tool_factory_common import (
+    backup_extra_tool_before_write,
     coerce_test_args,
     digest_reload_response,
     extra_root_or_error,
     ollama_generate_module,
     retry_hint_from_response,
+    tool_write_extra_for_digest,
     validate_module_text,
 )
 
@@ -107,6 +109,7 @@ def create_tool(arguments: dict[str, Any]) -> str:
                     )
                 continue
 
+            backup_path = backup_extra_tool_before_write(dest) if dest.is_file() else None
             try:
                 dest.write_text(text, encoding="utf-8", newline="\n")
             except OSError as e:
@@ -119,6 +122,7 @@ def create_tool(arguments: dict[str, Any]) -> str:
                 codegen_model=codegen_model,
                 test_tool_name=snake,
                 test_arguments=test_args,
+                extra=tool_write_extra_for_digest(backup_path),
             )
             out = json.loads(body_str)
             out["codegen_attempts"] = attempt + 1
@@ -170,6 +174,7 @@ def create_tool(arguments: dict[str, Any]) -> str:
             ensure_ascii=False,
         )
 
+    backup_path = backup_extra_tool_before_write(dest) if dest.is_file() else None
     try:
         dest.write_text(text, encoding="utf-8", newline="\n")
     except OSError as e:
@@ -182,6 +187,7 @@ def create_tool(arguments: dict[str, Any]) -> str:
         codegen_model=codegen_model,
         test_tool_name=None,
         test_arguments=coerce_test_args(arguments.get("test_arguments")),
+        extra=tool_write_extra_for_digest(backup_path),
     )
 
 

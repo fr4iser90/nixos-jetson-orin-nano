@@ -6,8 +6,9 @@ import json
 from typing import Any, Callable
 
 from app.registry import get_registry
+from app.tool_name_hints import suggest_tool_names
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 TOOL_ID = "tool_help"
 
 
@@ -66,11 +67,17 @@ def get_tool_help(arguments: dict[str, Any]) -> str:
             },
             ensure_ascii=False,
         )
+    suggestions = suggest_tool_names(reg, name)
     return json.dumps(
         {
             "ok": False,
             "error": f"unknown tool: {name}",
-            "hint": "Call list_available_tools for valid names.",
+            "hint": (
+                "Use exact names from list_available_tools. "
+                "There is no tool named openai_function or get_tool_result — "
+                "call the real tool (e.g. fishing_index) with tool_calls, or list_available_tools first."
+            ),
+            "suggestions": suggestions,
         },
         ensure_ascii=False,
     )
@@ -99,6 +106,7 @@ TOOLS: list[dict[str, Any]] = [
             "name": "get_tool_help",
             "description": (
                 "Returns full help for one tool: description and parameter schema. "
+                "If the name is wrong, the response includes suggestions (e.g. openweather_retrieve → openweather_current). "
                 "Use when the user asks how to use a specific tool by name."
             ),
             "parameters": {
