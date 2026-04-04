@@ -149,6 +149,10 @@ CREATE_TOOL_CODEGEN_MODEL = (
 CREATE_TOOL_CODEGEN_TIMEOUT = _env_int("AGENT_CREATE_TOOL_CODEGEN_TIMEOUT", 120)
 # Codegen prompt: allow httpx/urllib HTTP (keys only via os.environ — set in compose .env).
 CREATE_TOOL_CODEGEN_ALLOW_NETWORK = _env_bool("AGENT_CREATE_TOOL_CODEGEN_ALLOW_NETWORK", False)
+# Codegen: max Ollama attempts (validate + write + reload + test_tool probe). 1 = no retry; cap 20.
+CREATE_TOOL_CODEGEN_MAX_ATTEMPTS = max(
+    1, min(_env_int("AGENT_CREATE_TOOL_CODEGEN_MAX_ATTEMPTS", 1), 20)
+)
 
 
 def tool_log_redact_keys() -> frozenset[str]:

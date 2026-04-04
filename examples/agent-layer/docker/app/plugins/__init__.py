@@ -15,6 +15,11 @@ Layout (examples)::
     secrets/register_secrets.py, secrets/secrets_help.py
     tool_help/tool_help.py
     plugin_factory/create_tool.py
+    plugin_factory/list_tools.py
+    plugin_factory/read_tool.py
+    plugin_factory/update_tool.py
+    plugin_factory/replace_tool.py
+    plugin_factory/rename_tool.py
 
 Extra plugins under ``AGENT_PLUGINS_EXTRA_DIR`` may use the same nested layout.
 """

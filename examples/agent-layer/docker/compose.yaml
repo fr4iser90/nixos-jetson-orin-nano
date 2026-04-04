@@ -40,62 +40,13 @@ services:
         condition: service_healthy
     ports:
       - "${AGENT_HTTP_PORT:-8088}:8080"
-    environment:
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
-      # DATABASE_URL in .env ODER (wie postgres-Service) POSTGRES_* — app/config.py baut die URL dann selbst.
-      DATABASE_URL: ${DATABASE_URL:-}
-      POSTGRES_USER: ${POSTGRES_USER:-agent}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agent}
-      POSTGRES_DB: ${POSTGRES_DB:-agent}
-      PGHOST: postgres
-      AGENT_MAX_TOOL_ROUNDS: ${AGENT_MAX_TOOL_ROUNDS:-8}
-      # Default in app: X-OpenWebUI-User-Id, X-Agent-User-Sub (override with comma-list)
-      AGENT_USER_SUB_HEADER: ${AGENT_USER_SUB_HEADER:-}
-      AGENT_TENANT_ID_HEADER: ${AGENT_TENANT_ID_HEADER:-}
-      AGENT_DEFAULT_EXTERNAL_SUB: ${AGENT_DEFAULT_EXTERNAL_SUB:-}
-      AGENT_SECRETS_MASTER_KEY: ${AGENT_SECRETS_MASTER_KEY:-}
-      AGENT_PUBLIC_URL: ${AGENT_PUBLIC_URL:-}
-      AGENT_API_KEY: ${AGENT_API_KEY:-}
-      AGENT_SYSTEM_PROMPT: ${AGENT_SYSTEM_PROMPT:-}
-      AGENT_PLUGINS_EXTRA_DIR: ${AGENT_PLUGINS_EXTRA_DIR:-}
-      AGENT_PLUGINS_ALLOWED_SHA256: ${AGENT_PLUGINS_ALLOWED_SHA256:-}
-      AGENT_CONTENT_TOOL_FALLBACK: ${AGENT_CONTENT_TOOL_FALLBACK:-true}
-      AGENT_CORS_ORIGINS: ${AGENT_CORS_ORIGINS:-*}
-      AGENT_DISABLE_DDG_SEARCH: ${AGENT_DISABLE_DDG_SEARCH:-}
-      # deep_search ohne Tavily: Snippets + optional Seitenabruf (robots.txt)
-      AGENT_DISABLE_FETCH_DEEP: ${AGENT_DISABLE_FETCH_DEEP:-}
-      AGENT_ROBOTS_STRICT: ${AGENT_ROBOTS_STRICT:-}
-      AGENT_FETCH_USER_AGENT: ${AGENT_FETCH_USER_AGENT:-}
-      AGENT_FETCH_MAX_BYTES: ${AGENT_FETCH_MAX_BYTES:-}
-      AGENT_ROBOTS_CACHE_TTL: ${AGENT_ROBOTS_CACHE_TTL:-}
-      AGENT_FETCH_DOMAIN_ALLOWLIST: ${AGENT_FETCH_DOMAIN_ALLOWLIST:-}
-      AGENT_RESPECT_META_ROBOTS: ${AGENT_RESPECT_META_ROBOTS:-true}
-      # Künftige Tool-Plugins (nur wirksam wenn Code die Variablen liest)
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      BRAVE_SEARCH_API_KEY: ${BRAVE_SEARCH_API_KEY:-}
-      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
-      SERPAPI_API_KEY: ${SERPAPI_API_KEY:-}
-      # Local workspace (workspace_* tools): absolute path inside container + host bind mount (see .env.example).
-      AGENT_WORKSPACE_ROOT: ${AGENT_WORKSPACE_ROOT:-}
-      AGENT_WORKSPACE_MAX_FILE_BYTES: ${AGENT_WORKSPACE_MAX_FILE_BYTES:-}
-      AGENT_WORKSPACE_MAX_LIST_ENTRIES: ${AGENT_WORKSPACE_MAX_LIST_ENTRIES:-}
-      AGENT_WORKSPACE_MAX_GLOB_FILES: ${AGENT_WORKSPACE_MAX_GLOB_FILES:-}
-      AGENT_WORKSPACE_MAX_READ_LINES: ${AGENT_WORKSPACE_MAX_READ_LINES:-}
-      AGENT_WORKSPACE_MAX_SEARCH_FILES: ${AGENT_WORKSPACE_MAX_SEARCH_FILES:-}
-      AGENT_WORKSPACE_MAX_SEARCH_MATCHES: ${AGENT_WORKSPACE_MAX_SEARCH_MATCHES:-}
-      AGENT_WORKSPACE_SEARCH_MAX_FILE_BYTES: ${AGENT_WORKSPACE_SEARCH_MAX_FILE_BYTES:-}
-      # create_tool plugin: writes AGENT_PLUGINS_EXTRA_DIR; default disabled.
-      AGENT_CREATE_TOOL_ENABLED: ${AGENT_CREATE_TOOL_ENABLED:-}
-      AGENT_CREATE_TOOL_MAX_BYTES: ${AGENT_CREATE_TOOL_MAX_BYTES:-}
-      AGENT_CREATE_TOOL_CODEGEN_MODEL: ${AGENT_CREATE_TOOL_CODEGEN_MODEL:-}
-      AGENT_CREATE_TOOL_CODEGEN_TIMEOUT: ${AGENT_CREATE_TOOL_CODEGEN_TIMEOUT:-}
-      AGENT_CREATE_TOOL_CODEGEN_ALLOW_NETWORK: ${AGENT_CREATE_TOOL_CODEGEN_ALLOW_NETWORK:-}
-      AGENT_PLUGIN_DIRS: ${AGENT_PLUGIN_DIRS:-}
-      AGENT_TOOL_LOG_REDACT_KEYS: ${AGENT_TOOL_LOG_REDACT_KEYS:-}
-    # volumes:
-    #   - ./extra_plugins:/data/plugins:ro   # read-only extras
-    #   - ./extra_plugins:/data/plugins:rw   # create_tool: AGENT_CREATE_TOOL_ENABLED=true (Default-Pfad /data/plugins im Code)
-    #   - /path/on/host/your-project:/workspace:rw
+    env_file:
+      - .env
+    volumes:
+      # create_tool / Default AGENT_PLUGINS_EXTRA_DIR=/data/plugins — ohne Mount existiert der Pfad nicht.
+      - ./extra_plugins:/data/plugins:rw
+    # Optional read-only:  - ./extra_plugins:/data/plugins:ro
+    # Optional workspace_* : - /path/on/host/project:/workspace:rw  + AGENT_WORKSPACE_ROOT=/workspace
     networks:
       - ai-net
 volumes:
