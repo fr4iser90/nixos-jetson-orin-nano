@@ -68,6 +68,159 @@ def extra_root_or_error() -> tuple[Path | None, str | None]:
     return root, None
 
 
+def _path_under_extra(path: Path, extra_root: Path) -> bool:
+    try:
+        path.resolve().relative_to(extra_root.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def parse_plugin_meta_file_path(source: Any) -> Path | None:
+    if not isinstance(source, str) or not source.startswith("file:"):
+        return None
+    return Path(source[5:])
+
+
+def resolve_extra_py_filename(*, extra_root: Path, hint: str) -> tuple[str | None, str | None]:
+    """
+    Map ``fishing_index``, ``fishingIndex``, or ``fishing_index.py`` to a basename under ``extra_root``
+    using registry metadata (only plugins loaded from files inside that directory).
+    """
+    h = (hint or "").strip()
+    if not h:
+        return None, json.dumps({"ok": False, "error": "tool name hint is empty"}, ensure_ascii=False)
+    er = extra_root.resolve()
+
+    if h.endswith(".py"):
+        fn, fe = plugin_authoring.sanitize_plugin_filename(h)
+        if fe:
+            return None, json.dumps({"ok": False, "error": fe}, ensure_ascii=False)
+        if (er / fn).is_file():
+            return fn, None
+        return None, json.dumps(
+            {
+                "ok": False,
+                "error": f"no file {fn!r} under AGENT_PLUGINS_EXTRA_DIR",
+                "hint": "Use list_tools for basenames.",
+            },
+            ensure_ascii=False,
+        )
+
+    snake, terr = plugin_authoring.slugify_openai_tool_name(h)
+    if terr:
+        return None, json.dumps({"ok": False, "error": terr}, ensure_ascii=False)
+
+    reg = get_registry()
+    for meta in reg.plugins_meta:
+        path = parse_plugin_meta_file_path(meta.get("source"))
+        if path is None:
+            continue
+        try:
+            pr = path.resolve()
+        except OSError:
+            pr = path
+        if not _path_under_extra(pr, er):
+            continue
+        tools = meta.get("tools") or []
+        if not isinstance(tools, list):
+            continue
+        tool_set = {str(t) for t in tools if isinstance(t, str)}
+        if snake in tool_set or h in tool_set:
+            return path.name, None
+
+    return None, json.dumps(
+        {
+            "ok": False,
+            "error": (
+                f"no module under AGENT_PLUGINS_EXTRA_DIR exports OpenAI tool name {snake!r} "
+                f"(hint: {h!r})"
+            ),
+            "hint": (
+                "Use list_available_tools for names, list_tools for .py files; "
+                "openai_tool_name must match a tool defined in a file under the extra plugin directory."
+            ),
+        },
+        ensure_ascii=False,
+    )
+
+
+def coalesce_tool_file_target(arguments: dict[str, Any], *, extra_root: Path) -> tuple[str | None, str | None]:
+    """Return ``(basename.py, None)`` or ``(None, error_json_str)``."""
+    raw_fn = str(arguments.get("filename") or "").strip()
+    if raw_fn:
+        fn, fe = plugin_authoring.sanitize_plugin_filename(raw_fn)
+        if fe:
+            return None, json.dumps({"ok": False, "error": fe}, ensure_ascii=False)
+        return fn, None
+
+    for key in ("openai_tool_name", "tool_name", "name"):
+        v = arguments.get(key)
+        if v is None or not str(v).strip():
+            continue
+        return resolve_extra_py_filename(extra_root=extra_root, hint=str(v).strip())
+
+    return None, json.dumps(
+        {
+            "ok": False,
+            "error": "Provide filename (e.g. fishing_index.py) or openai_tool_name / tool_name / name (e.g. fishing_index)",
+            "hint": "openai_tool_name must match a tool implemented in a .py file under AGENT_PLUGINS_EXTRA_DIR.",
+        },
+        ensure_ascii=False,
+    )
+
+
+def reject_update_tool_confused_arguments(arguments: dict[str, Any]) -> str | None:
+    """Return error JSON if args look like create_tool/replace_tool; else None."""
+    if arguments.get("old_string") is not None:
+        return None
+    if arguments.get("source") is not None:
+        return json.dumps(
+            {
+                "ok": False,
+                "error": "update_tool patches with old_string/new_string, not source",
+                "use_instead": "replace_tool with full source, or create_tool for codegen",
+            },
+            ensure_ascii=False,
+        )
+    for key, owner in (
+        ("overwrite", "create_tool (or replace_tool when replacing whole file)"),
+        ("description", "create_tool when generating a new module without source"),
+    ):
+        if arguments.get(key) is not None:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": f"update_tool does not accept {key!r} — that belongs on {owner}",
+                    "hint": "After read_tool: call update_tool with old_string (exact snippet) and new_string.",
+                },
+                ensure_ascii=False,
+            )
+    return None
+
+
+def reject_replace_tool_confused_arguments(arguments: dict[str, Any]) -> str | None:
+    if arguments.get("old_string") is not None or arguments.get("new_string") is not None:
+        return json.dumps(
+            {
+                "ok": False,
+                "error": "replace_tool replaces the entire file; it does not use old_string/new_string",
+                "use_instead": "update_tool for substring patches",
+            },
+            ensure_ascii=False,
+        )
+    if arguments.get("overwrite") is not None:
+        return json.dumps(
+            {
+                "ok": False,
+                "error": "replace_tool always overwrites the whole file; there is no overwrite flag",
+                "hint": "Pass filename (or openai_tool_name) and full source only.",
+            },
+            ensure_ascii=False,
+        )
+    return None
+
+
 def digest_reload_response(
     fn: str,
     dest: Path,

@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from app import plugin_authoring
 
-from ._tool_factory_common import digest_reload_response, extra_root_or_error
+from app.plugins.plugin_factory._tool_factory_common import digest_reload_response, extra_root_or_error
 
 __version__ = "1.0.0"
 PLUGIN_ID = "rename_tool"

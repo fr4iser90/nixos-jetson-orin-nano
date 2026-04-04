@@ -5,11 +5,15 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from app import plugin_authoring
+from app.plugins.plugin_factory._tool_factory_common import (
+    coalesce_tool_file_target,
+    digest_reload_response,
+    extra_root_or_error,
+    reject_replace_tool_confused_arguments,
+    validate_module_text,
+)
 
-from ._tool_factory_common import digest_reload_response, extra_root_or_error, validate_module_text
-
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 PLUGIN_ID = "replace_tool"
 
 
@@ -18,9 +22,13 @@ def replace_tool(arguments: dict[str, Any]) -> str:
     if err:
         return err
     assert root is not None
-    fn, fe = plugin_authoring.sanitize_plugin_filename(str(arguments.get("filename") or ""))
-    if fe or not fn:
-        return json.dumps({"ok": False, "error": fe or "filename required"}, ensure_ascii=False)
+    confused = reject_replace_tool_confused_arguments(arguments)
+    if confused:
+        return confused
+    fn, ferr = coalesce_tool_file_target(arguments, extra_root=root)
+    if ferr:
+        return ferr
+    assert fn is not None
     source = arguments.get("source")
     if source is None or not str(source).strip():
         return json.dumps({"ok": False, "error": "source required (full module text)"}, ensure_ascii=False)
@@ -58,9 +66,12 @@ TOOLS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "filename": {"type": "string"},
+                    "openai_tool_name": {"type": "string", "description": "Alternative to filename when the tool lives under AGENT_PLUGINS_EXTRA_DIR"},
+                    "tool_name": {"type": "string", "description": "Alias for openai_tool_name"},
+                    "name": {"type": "string", "description": "Alias for openai_tool_name"},
                     "source": {"type": "string", "description": "Full replacement module text"},
                 },
-                "required": ["filename", "source"],
+                "required": ["source"],
             },
         },
     },

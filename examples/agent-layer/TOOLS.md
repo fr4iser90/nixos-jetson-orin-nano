@@ -3,6 +3,8 @@
 Übersicht über **eingebaute** und **geplante** Tools, dazu Ideen für Erweiterungen.  
 Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten Plugin-Wurzeln** (`AGENT_PLUGIN_DIRS` oder Standard: `app/plugins` + optional `AGENT_PLUGINS_EXTRA_DIR`). Die Registry scannt **rekursiv** (Domänen-Unterordner wie `github/`, `secrets/`, `calendar/`). Kein Tool ist im HTTP-Core eingetragen. Secrets nur über **`.env`** / Env, siehe `docker/.env.example`.
 
+**Tool-Routing (Subset):** Pro Chat-Request kann der Agent nur eine **Teilmenge** der Tools an Ollama schicken — weniger Verwechslungen (z. B. `workspace_*` vs. `read_tool`). Steuerung: Header **`X-Agent-Mode`**: `full` \| `plugin_factory` \| `workspace` \| `default_chat`; oder JSON **`agent_tool_mode`** / **`agent_mode`**; Default **`AGENT_TOOL_MODE`** in `.env`. Ohne expliziten Modus: optional **Keyword-Router** auf der letzten User-Message, optional **LLM-Router** (`AGENT_TOOL_ROUTER_LLM_ENABLED`). Nach fehlgeschlagenem **`workspace_*`** („Workspace disabled“) können folgende Runden auf **`plugin_factory`** eingeschränkt werden (`AGENT_TOOL_RETRY_NARROW_TO_PLUGIN_FACTORY`). **Modellbasiert:** Wenn die Chat-**Modell-ID** Substrings aus **`AGENT_WEAK_TOOL_MODEL_SUBSTRINGS`** enthält (Default `nemotron`, `nano`), werden im Modus **`plugin_factory`** die in **`AGENT_WEAK_TOOL_MODEL_EXCLUDE_TOOLS`** genannten Tools weggelassen (Default: **`update_tool`**) — kleine Modelle sollen **`replace_tool`** / **`create_tool`** nutzen statt exakter Patches. **Orchestrierung:** `POST /v1/chat/completions/plugin-factory` erzwingt `plugin_factory`; optional **`plugin_prefetch`**: `{"openai_tool_name":"…"}` — Server führt intern **`read_tool`** aus und hängt den Quelltext an den System-Prompt. Details: `docker/.env.example` → Abschnitt Tool-Routing.
+
 ---
 
 ## Checkliste (built-in)
@@ -21,9 +23,9 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten P
 | [x] | `secrets_help` | `secrets_help` | Statische Hilfe zu User-Secrets; **kein** OTP — OTP nur aus `register_secrets`. |
 | [x] | `create_tool` | `plugin_factory/create_tool.py` | Neues Extra-Plugin (Quelltext oder Codegen via Ollama); `AGENT_CREATE_TOOL_ENABLED=true` + beschreibbares Extra-Verzeichnis. |
 | [x] | `list_tools` | `plugin_factory/list_tools.py` | Dateinamen (`.py`, eine Ebene) im beschreibbaren Tool-Modul-Ordner (`AGENT_PLUGINS_EXTRA_DIR`). |
-| [x] | `read_tool` | `plugin_factory/read_tool.py` | Vollständigen Quelltext einer `.py`-Datei dort zurückgeben. |
-| [x] | `update_tool` | `plugin_factory/update_tool.py` | Teiländerung: `old_string` → `new_string` (optional `replace_all`); danach Syntax/AST-Check, Reload. |
-| [x] | `replace_tool` | `plugin_factory/replace_tool.py` | Gesamte `.py`-Datei durch vollen `source` ersetzen (Syntax/AST-Check, Reload). |
+| [x] | `read_tool` | `plugin_factory/read_tool.py` | Quelltext einer dynamischen `.py`; Ziel per `filename` **oder** `openai_tool_name` / `tool_name` / `name` (Registry-Zuordnung unter `AGENT_PLUGINS_EXTRA_DIR`). |
+| [x] | `update_tool` | `plugin_factory/update_tool.py` | Patch (`old_string`/`new_string`); Ziel wie bei `read_tool`. Verwechslungen (`overwrite`, `description`, `source`) → klare JSON-Fehler. |
+| [x] | `replace_tool` | `plugin_factory/replace_tool.py` | Ganze Datei durch `source`; Ziel wie bei `read_tool`. |
 | [x] | `rename_tool` | `plugin_factory/rename_tool.py` | `.py`-Datei umbenennen (Reload). |
 | [x] | `gmail_search` | `gmail` | Gmail-Suche (IMAP `X-GM-RAW`, z. B. `newer_than:7d is:unread`). |
 | [x] | `gmail_read` | `gmail` | Eine Mail per IMAP-UID lesen (Plain-Text-Body, gekürzt). |

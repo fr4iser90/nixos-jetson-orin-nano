@@ -6,6 +6,15 @@ from urllib.parse import quote_plus
 logger = logging.getLogger(__name__)
 
 
+def normalize_tool_mode(raw: str | None) -> str:
+    s = (raw or "").strip().lower()
+    if s == "default":
+        return "default_chat"
+    if s in ("full", "plugin_factory", "workspace", "default_chat"):
+        return s
+    return "full"
+
+
 def _env_bool(key: str, default: bool) -> bool:
     v = os.environ.get(key, "").strip().lower()
     if not v:
@@ -29,6 +38,49 @@ SYSTEM_PROMPT_EXTRA = os.environ.get("AGENT_SYSTEM_PROMPT", "").strip()
 
 # If Ollama returns no tool_calls but JSON tool intent in message content (e.g. Nemotron), parse and run.
 CONTENT_TOOL_FALLBACK = _env_bool("AGENT_CONTENT_TOOL_FALLBACK", True)
+
+# --- Tool routing (subset by mode; header X-Agent-Mode overrides) ---
+# full | plugin_factory | workspace | default_chat (alias: default)
+AGENT_TOOL_MODE = normalize_tool_mode(os.environ.get("AGENT_TOOL_MODE", "full"))
+
+AGENT_TOOL_MODE_PLUGIN_FACTORY_INCLUDES_HELP = _env_bool(
+    "AGENT_TOOL_MODE_PLUGIN_FACTORY_INCLUDES_HELP", True
+)
+# If no X-Agent-Mode / JSON agent_tool_mode: keyword substring match on last user message
+AGENT_TOOL_ROUTER_KEYWORDS_ENABLED = _env_bool("AGENT_TOOL_ROUTER_KEYWORDS_ENABLED", True)
+# Comma-separated case-insensitive substrings (empty = use built-in defaults in agent)
+AGENT_TOOL_ROUTER_KEYWORDS_PLUGIN_FACTORY = os.environ.get(
+    "AGENT_TOOL_ROUTER_KEYWORDS_PLUGIN_FACTORY", ""
+).strip()
+AGENT_TOOL_ROUTER_KEYWORDS_WORKSPACE = os.environ.get(
+    "AGENT_TOOL_ROUTER_KEYWORDS_WORKSPACE", ""
+).strip()
+# Optional second stage: one short Ollama call when keywords are inconclusive
+AGENT_TOOL_ROUTER_LLM_ENABLED = _env_bool("AGENT_TOOL_ROUTER_LLM_ENABLED", False)
+AGENT_TOOL_ROUTER_MODEL = (os.environ.get("AGENT_TOOL_ROUTER_MODEL") or "").strip()
+# After workspace_* fails with "disabled", narrow remaining rounds to plugin_factory tools
+AGENT_TOOL_RETRY_NARROW_TO_PLUGIN_FACTORY = _env_bool(
+    "AGENT_TOOL_RETRY_NARROW_TO_PLUGIN_FACTORY", True
+)
+
+# In plugin_factory mode: if chat ``model`` id contains any substring (case-insensitive), drop listed tools.
+# Small models fail at exact old_string patches; replace_tool / create_tool work better.
+def _weak_tool_model_substrings() -> list[str]:
+    raw = (os.environ.get("AGENT_WEAK_TOOL_MODEL_SUBSTRINGS") or "nemotron,nano").strip()
+    if not raw:
+        return []
+    return [s.strip().lower() for s in raw.split(",") if s.strip()]
+
+
+def _weak_tool_model_exclude_names() -> frozenset[str]:
+    raw = (os.environ.get("AGENT_WEAK_TOOL_MODEL_EXCLUDE_TOOLS") or "update_tool").strip()
+    if not raw:
+        return frozenset()
+    return frozenset(x.strip() for x in raw.split(",") if x.strip())
+
+
+AGENT_WEAK_TOOL_MODEL_SUBSTRINGS = _weak_tool_model_substrings()
+AGENT_WEAK_TOOL_MODEL_EXCLUDE_TOOLS = _weak_tool_model_exclude_names()
 
 
 def _resolve_database_url() -> str:

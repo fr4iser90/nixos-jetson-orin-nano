@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from ._tool_factory_common import extra_root_or_error
+from app.plugins.plugin_factory._tool_factory_common import extra_root_or_error
 
 __version__ = "1.0.0"
 PLUGIN_ID = "list_tools"

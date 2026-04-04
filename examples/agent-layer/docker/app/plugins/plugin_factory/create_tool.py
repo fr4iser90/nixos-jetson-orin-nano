@@ -8,7 +8,7 @@ from typing import Any, Callable
 from app import config
 from app import plugin_authoring
 
-from ._tool_factory_common import (
+from app.plugins.plugin_factory._tool_factory_common import (
     coerce_test_args,
     digest_reload_response,
     extra_root_or_error,

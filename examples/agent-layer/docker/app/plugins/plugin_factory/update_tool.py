@@ -5,11 +5,15 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from app import plugin_authoring
+from app.plugins.plugin_factory._tool_factory_common import (
+    coalesce_tool_file_target,
+    digest_reload_response,
+    extra_root_or_error,
+    reject_update_tool_confused_arguments,
+    validate_module_text,
+)
 
-from ._tool_factory_common import digest_reload_response, extra_root_or_error, validate_module_text
-
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 PLUGIN_ID = "update_tool"
 
 
@@ -18,16 +22,32 @@ def update_tool(arguments: dict[str, Any]) -> str:
     if err:
         return err
     assert root is not None
-    fn, fe = plugin_authoring.sanitize_plugin_filename(str(arguments.get("filename") or ""))
-    if fe or not fn:
-        return json.dumps({"ok": False, "error": fe or "filename required"}, ensure_ascii=False)
+    confused = reject_update_tool_confused_arguments(arguments)
+    if confused:
+        return confused
+    fn, ferr = coalesce_tool_file_target(arguments, extra_root=root)
+    if ferr:
+        return ferr
+    assert fn is not None
     old = arguments.get("old_string")
     if old is None:
-        return json.dumps({"ok": False, "error": "old_string is required"}, ensure_ascii=False)
+        return json.dumps(
+            {
+                "ok": False,
+                "error": "old_string is required (exact substring from read_tool output)",
+                "hint": (
+                    "update_tool is a text patch, not codegen. Use create_tool with tool_name/description to regenerate, "
+                    "or replace_tool with full source. Optional: read_tool with openai_tool_name first."
+                ),
+            },
+            ensure_ascii=False,
+        )
+    old_s = str(old)
+    if old_s == "":
+        return json.dumps({"ok": False, "error": "old_string cannot be empty"}, ensure_ascii=False)
     new = arguments.get("new_string")
     if new is None:
         new = ""
-    old_s = str(old)
     new_s = str(new)
 
     dest = root / fn
@@ -98,15 +118,22 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "update_tool",
             "description": (
-                "Patch an existing .py tool module: replace old_string with new_string (like workspace_replace_text). "
+                "Patch a dynamic tool module under AGENT_PLUGINS_EXTRA_DIR: old_string → new_string (not codegen). "
+                "Use filename **or** openai_tool_name / tool_name / name (e.g. fishing_index). "
+                "Do NOT pass overwrite/description/source here — those belong on create_tool or replace_tool. "
                 "Unless replace_all is true, old_string must match exactly once. "
-                "After the edit: compile + AST + registry check + reload. "
-                "Typical flow: read_tool → update_tool. For full file rewrite use replace_tool."
+                "Flow: read_tool (same identifier) → update_tool. Full file: replace_tool."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "filename": {"type": "string", "description": "Basename under AGENT_PLUGINS_EXTRA_DIR"},
+                    "filename": {"type": "string", "description": "Basename e.g. fishing_index.py"},
+                    "openai_tool_name": {
+                        "type": "string",
+                        "description": "OpenAI tool name if file is under AGENT_PLUGINS_EXTRA_DIR (alternative to filename)",
+                    },
+                    "tool_name": {"type": "string", "description": "Alias for openai_tool_name"},
+                    "name": {"type": "string", "description": "Alias for openai_tool_name"},
                     "old_string": {"type": "string", "description": "Exact substring to replace (use enough context to be unique)"},
                     "new_string": {"type": "string", "description": "Replacement text (may be empty to delete old_string)"},
                     "replace_all": {
@@ -114,7 +141,7 @@ TOOLS: list[dict[str, Any]] = [
                         "description": "If true, replace every occurrence of old_string",
                     },
                 },
-                "required": ["filename", "old_string"],
+                "required": ["old_string"],
             },
         },
     },
