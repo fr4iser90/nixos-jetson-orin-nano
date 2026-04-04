@@ -43,9 +43,9 @@ services:
     env_file:
       - .env
     volumes:
-      # create_tool / Default AGENT_PLUGINS_EXTRA_DIR=/data/plugins — ohne Mount existiert der Pfad nicht.
-      - ./extra_plugins:/data/plugins:rw
-    # Optional read-only:  - ./extra_plugins:/data/plugins:ro
+      # create_tool / Default AGENT_TOOLS_EXTRA_DIR=/data/tools — ohne Mount existiert der Pfad nicht.
+      - ./extra_tools:/data/tools:rw
+    # Optional read-only:  - ./extra_tools:/data/tools:ro
     # Optional workspace_* : - /path/on/host/project:/workspace:rw  + AGENT_WORKSPACE_ROOT=/workspace
     networks:
       - ai-net

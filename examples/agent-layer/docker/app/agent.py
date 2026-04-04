@@ -26,19 +26,19 @@ from .tools import run_tool
 logger = logging.getLogger(__name__)
 
 # Substrings for keyword router when env lists are empty (conservative on "workspace").
-_DEFAULT_ROUTER_PLUGIN_SUBSTRINGS = [
+_DEFAULT_ROUTER_TOOL_SUBSTRINGS = [
     "create_tool",
     "read_tool",
     "update_tool",
     "replace_tool",
     "rename_tool",
     "list_tools",
-    "/data/plugins",
-    "extra_plugins",
-    "plugin_factory",
+    "/data/tools",
+    "extra_tools",
+    "tool_factory",
     "openai_tool_name",
-    "dynamic plugin",
-    "AGENT_PLUGINS_EXTRA_DIR",
+    "dynamic tool",
+    "AGENT_TOOLS_EXTRA_DIR",
     "fishing_index",
 ]
 _DEFAULT_ROUTER_WORKSPACE_SUBSTRINGS = [
@@ -57,7 +57,7 @@ _BODY_KEYS_STRIP_FROM_OLLAMA = frozenset(
     {
         "agent_tool_mode",
         "agent_mode",
-        "plugin_prefetch",
+        "tool_prefetch",
     }
 )
 
@@ -284,11 +284,11 @@ def _synthetic_tool_calls_from_message(
     return None
 
 
-def _router_plugin_substrings() -> list[str]:
-    raw = config.AGENT_TOOL_ROUTER_KEYWORDS_PLUGIN_FACTORY
+def _router_tool_substrings() -> list[str]:
+    raw = config.AGENT_TOOL_ROUTER_KEYWORDS_TOOL_FACTORY
     if raw:
         return [x.strip() for x in raw.split(",") if x.strip()]
-    return list(_DEFAULT_ROUTER_PLUGIN_SUBSTRINGS)
+    return list(_DEFAULT_ROUTER_TOOL_SUBSTRINGS)
 
 
 def _router_workspace_substrings() -> list[str]:
@@ -308,7 +308,7 @@ async def _resolve_tool_mode(body: dict[str, Any], *, chat_model: str) -> str:
     if config.AGENT_TOOL_ROUTER_KEYWORDS_ENABLED and ut:
         kw = classify_mode_by_keywords(
             ut,
-            plugin_substrings=_router_plugin_substrings(),
+            tool_substrings=_router_tool_substrings(),
             workspace_substrings=_router_workspace_substrings(),
         )
         if kw:
@@ -329,7 +329,7 @@ async def _resolve_tool_mode(body: dict[str, Any], *, chat_model: str) -> str:
     return normalize_mode(config.AGENT_TOOL_MODE)
 
 
-def _apply_plugin_prefetch(messages: list[dict[str, Any]], prefetch: dict[str, Any]) -> None:
+def _apply_tool_prefetch(messages: list[dict[str, Any]], prefetch: dict[str, Any]) -> None:
     args = {
         k: prefetch[k]
         for k in ("filename", "openai_tool_name", "tool_name", "name")
@@ -346,7 +346,7 @@ def _apply_plugin_prefetch(messages: list[dict[str, Any]], prefetch: dict[str, A
         src = str(o.get("source") or "")
         max_c = min(len(src), config.CREATE_TOOL_MAX_BYTES)
         block = (
-            "Server prefetch via read_tool — edit this **extra-plugin module** with read_tool/update_tool/replace_tool "
+            "Server prefetch via read_tool — edit this **extra-tool module** with read_tool/update_tool/replace_tool "
             "(not workspace_*).\n\n"
             f"File: `{o.get('filename')}`\n\n```python\n{src[:max_c]}\n```"
         )
@@ -366,10 +366,10 @@ def _apply_plugin_prefetch(messages: list[dict[str, Any]], prefetch: dict[str, A
         messages.insert(0, {"role": "system", "content": block})
 
 
-def _inject_plugin_factory_tool_hint(messages: list[dict[str, Any]]) -> None:
+def _inject_tool_factory_tool_hint(messages: list[dict[str, Any]]) -> None:
     """Steer small models away from inventing JSON keys like replace_source instead of real tool_calls."""
     hint = (
-        "[plugin_factory] After read_tool you must call a real tool from the schema (OpenAI tool_calls), "
+        "[tool_factory] After read_tool you must call a real tool from the schema (OpenAI tool_calls), "
         "not arbitrary JSON in the reply text. "
         "Prefer replace_tool: openai_tool_name or filename plus source (complete valid Python module). "
         "update_tool may be unavailable for small chat models — use replace_tool for full rewrites. "
@@ -401,9 +401,9 @@ def _tools_for_round(
     tfr = filter_tools_for_mode(
         merged_tools,
         active_mode,
-        plugin_factory_includes_help=config.AGENT_TOOL_MODE_PLUGIN_FACTORY_INCLUDES_HELP,
+        tool_factory_includes_help=config.AGENT_TOOL_MODE_TOOL_FACTORY_INCLUDES_HELP,
     )
-    if normalize_mode(active_mode) == "plugin_factory":
+    if normalize_mode(active_mode) == "tool_factory":
         tfr = apply_weak_model_tool_strip(
             tfr,
             str(model) if model is not None else "",
@@ -420,13 +420,13 @@ async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("missing model")
 
     messages = _inject_system_prompt(list(body.get("messages") or []))
-    pf = body.get("plugin_prefetch")
+    pf = body.get("tool_prefetch")
     if isinstance(pf, dict):
-        _apply_plugin_prefetch(messages, pf)
+        _apply_tool_prefetch(messages, pf)
 
     tool_mode = await _resolve_tool_mode(body, chat_model=str(model))
-    if tool_mode == "plugin_factory":
-        _inject_plugin_factory_tool_hint(messages)
+    if tool_mode == "tool_factory":
+        _inject_tool_factory_tool_hint(messages)
 
     merged_tools = _merge_tools(body.get("tools"))
     tools = _tools_for_round(merged_tools, tool_mode, model)
@@ -517,21 +517,21 @@ async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
                 logger.info("tool round %s: %s(%s)", round_i + 1, name, args)
                 result = run_tool(name, args)
                 if (
-                    config.AGENT_TOOL_RETRY_NARROW_TO_PLUGIN_FACTORY
+                    config.AGENT_TOOL_RETRY_NARROW_TO_TOOL_FACTORY
                     and narrow_mode is None
                     and should_narrow_after_tool_result(name, result)
                 ):
-                    narrow_mode = "plugin_factory"
+                    narrow_mode = "tool_factory"
                     logger.info(
-                        "tool routing: narrowed remaining rounds to plugin_factory "
-                        "(workspace tool failed; use read_tool/update_tool/replace_tool for /data/plugins)"
+                        "tool routing: narrowed remaining rounds to tool_factory "
+                        "(workspace tool failed; use read_tool/update_tool/replace_tool for /data/tools)"
                     )
                     messages.append(
                         {
                             "role": "system",
                             "content": (
                                 "Workspace tools are not available in this deployment. "
-                                "For Python modules under the extra plugin directory, use read_tool, "
+                                "For Python modules under the extra tool directory, use read_tool, "
                                 "update_tool, replace_tool, or create_tool — not workspace_*. "
                                 "Call replace_tool with source (full file) or update_tool with old_string/new_string; "
                                 "do not reply with invented JSON like replace_source."

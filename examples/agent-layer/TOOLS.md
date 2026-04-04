@@ -1,15 +1,15 @@
 # Agent layer — Tools
 
 Übersicht über **eingebaute** und **geplante** Tools, dazu Ideen für Erweiterungen.  
-Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten Plugin-Wurzeln** (`AGENT_PLUGIN_DIRS` oder Standard: `app/plugins` + optional `AGENT_PLUGINS_EXTRA_DIR`). Die Registry scannt **rekursiv** (Domänen-Unterordner wie `github/`, `secrets/`, `calendar/`). Kein Tool ist im HTTP-Core eingetragen. Secrets nur über **`.env`** / Env, siehe `docker/.env.example`.
+Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten Tool-Wurzeln** (`AGENT_TOOL_DIRS` oder Standard: `agent_tools` im Image + optional `AGENT_TOOLS_EXTRA_DIR`). Die Registry scannt **rekursiv** (Domänen-Unterordner wie `github/`, `secrets/`, `calendar/`). Kein Tool ist im HTTP-Core eingetragen. Secrets nur über **`.env`** / Env, siehe `docker/.env.example`.
 
-**Tool-Routing (Subset):** Pro Chat-Request kann der Agent nur eine **Teilmenge** der Tools an Ollama schicken — weniger Verwechslungen (z. B. `workspace_*` vs. `read_tool`). Steuerung: Header **`X-Agent-Mode`**: `full` \| `plugin_factory` \| `workspace` \| `default_chat`; oder JSON **`agent_tool_mode`** / **`agent_mode`**; Default **`AGENT_TOOL_MODE`** in `.env`. Ohne expliziten Modus: optional **Keyword-Router** auf der letzten User-Message, optional **LLM-Router** (`AGENT_TOOL_ROUTER_LLM_ENABLED`). Nach fehlgeschlagenem **`workspace_*`** („Workspace disabled“) können folgende Runden auf **`plugin_factory`** eingeschränkt werden (`AGENT_TOOL_RETRY_NARROW_TO_PLUGIN_FACTORY`). **Modellbasiert:** Wenn die Chat-**Modell-ID** Substrings aus **`AGENT_WEAK_TOOL_MODEL_SUBSTRINGS`** enthält (Default `nemotron`, `nano`), werden im Modus **`plugin_factory`** die in **`AGENT_WEAK_TOOL_MODEL_EXCLUDE_TOOLS`** genannten Tools weggelassen (Default: **`update_tool`**) — kleine Modelle sollen **`replace_tool`** / **`create_tool`** nutzen statt exakter Patches. **Orchestrierung:** `POST /v1/chat/completions/plugin-factory` erzwingt `plugin_factory`; optional **`plugin_prefetch`**: `{"openai_tool_name":"…"}` — Server führt intern **`read_tool`** aus und hängt den Quelltext an den System-Prompt. Details: `docker/.env.example` → Abschnitt Tool-Routing.
+**Tool-Routing (Subset):** Pro Chat-Request kann der Agent nur eine **Teilmenge** der Tools an Ollama schicken — weniger Verwechslungen (z. B. `workspace_*` vs. `read_tool`). Steuerung: Header **`X-Agent-Mode`**: `full` \| `tool_factory` \| `workspace` \| `default_chat`; oder JSON **`agent_tool_mode`** / **`agent_mode`**; Default **`AGENT_TOOL_MODE`** in `.env`. Ohne expliziten Modus: optional **Keyword-Router** auf der letzten User-Message, optional **LLM-Router** (`AGENT_TOOL_ROUTER_LLM_ENABLED`). Nach fehlgeschlagenem **`workspace_*`** („Workspace disabled“) können folgende Runden auf **`tool_factory`** eingeschränkt werden (`AGENT_TOOL_RETRY_NARROW_TO_TOOL_FACTORY`). **Modellbasiert:** Wenn die Chat-**Modell-ID** Substrings aus **`AGENT_WEAK_TOOL_MODEL_SUBSTRINGS`** enthält (Default `nemotron`, `nano`), werden im Modus **`tool_factory`** die in **`AGENT_WEAK_TOOL_MODEL_EXCLUDE_TOOLS`** genannten Tools weggelassen (Default: **`update_tool`**) — kleine Modelle sollen **`replace_tool`** / **`create_tool`** nutzen statt exakter Patches. **Orchestrierung:** `POST /v1/chat/completions/tool-factory` erzwingt `tool_factory`; optional **`tool_prefetch`**: `{"openai_tool_name":"…"}` — Server führt intern **`read_tool`** aus und hängt den Quelltext an den System-Prompt. Details: `docker/.env.example` → Abschnitt Tool-Routing.
 
 ---
 
 ## Checkliste (built-in)
 
-| Status | Tool | Plugin | Kurzbeschreibung |
+| Status | Tool | Tool | Kurzbeschreibung |
 |--------|------|--------|------------------|
 | [x] | `get_current_time` | `clock` | IANA-Zeitzone, ISO-Zeit (ohne DB). |
 | [x] | `create_todo` | `todos` | Todo anlegen (**pro** `X-Agent-User-Sub` + Tenant). |
@@ -17,16 +17,17 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten P
 | [x] | `set_todo_status` | `todos` | Status nur für eigene Zeilen. |
 | [x] | `search_web` | `web_search` | Tavily → Brave → **ddgs**-Metasuche ohne API-Key (inoffiziell). |
 | [x] | `deep_search` | `web_search` | Tavily: `raw_content`. Ohne: Snippets + **Seitenabruf** wenn `robots.txt` den UA erlaubt (`fetch_status`, `raw_content`). Abschalten: `AGENT_DISABLE_FETCH_DEEP=true`. |
+| [x] | `openweather_current` | `openweather` | Aktuelles Wetter (OpenWeather `/weather`, metrisch); Key nur **`OPENWEATHER_API_KEY`** in der Agent-Umgebung. |
 | [x] | `list_available_tools` | `tool_help` | Alle Tools mit Beschreibung + JSON-Schema (Parameter). |
 | [x] | `get_tool_help` | `tool_help` | Hilfe zu einem Tool nach Namen (`tool_name`). |
 | [x] | `register_secrets` | `register_secrets` | Secret registrieren: Einmalcode + fertiger `curl` (OTP-Flow); nur in `register_secrets.py`. |
 | [x] | `secrets_help` | `secrets_help` | Statische Hilfe zu User-Secrets; **kein** OTP — OTP nur aus `register_secrets`. |
-| [x] | `create_tool` | `plugin_factory/create_tool.py` | Neues Extra-Plugin (Quelltext oder Codegen via Ollama); `AGENT_CREATE_TOOL_ENABLED=true` + beschreibbares Extra-Verzeichnis. |
-| [x] | `list_tools` | `plugin_factory/list_tools.py` | Dateinamen (`.py`, eine Ebene) im beschreibbaren Tool-Modul-Ordner (`AGENT_PLUGINS_EXTRA_DIR`). |
-| [x] | `read_tool` | `plugin_factory/read_tool.py` | Quelltext einer dynamischen `.py`; Ziel per `filename` **oder** `openai_tool_name` / `tool_name` / `name` (Registry-Zuordnung unter `AGENT_PLUGINS_EXTRA_DIR`). |
-| [x] | `update_tool` | `plugin_factory/update_tool.py` | Patch (`old_string`/`new_string`); Ziel wie bei `read_tool`. Verwechslungen (`overwrite`, `description`, `source`) → klare JSON-Fehler. |
-| [x] | `replace_tool` | `plugin_factory/replace_tool.py` | Ganze Datei durch `source`; Ziel wie bei `read_tool`. |
-| [x] | `rename_tool` | `plugin_factory/rename_tool.py` | `.py`-Datei umbenennen (Reload). |
+| [x] | `create_tool` | `tool_factory/create_tool.py` | Neues Extra-Tool (Quelltext oder Codegen via Ollama); `AGENT_CREATE_TOOL_ENABLED=true` + beschreibbares Extra-Verzeichnis. |
+| [x] | `list_tools` | `tool_factory/list_tools.py` | Dateinamen (`.py`, eine Ebene) im beschreibbaren Tool-Modul-Ordner (`AGENT_TOOLS_EXTRA_DIR`). |
+| [x] | `read_tool` | `tool_factory/read_tool.py` | Quelltext einer dynamischen `.py`; Ziel per `filename` **oder** `openai_tool_name` / `tool_name` / `name` (Registry-Zuordnung unter `AGENT_TOOLS_EXTRA_DIR`). |
+| [x] | `update_tool` | `tool_factory/update_tool.py` | Patch (`old_string`/`new_string`); Ziel wie bei `read_tool`. Verwechslungen (`overwrite`, `description`, `source`) → klare JSON-Fehler. |
+| [x] | `replace_tool` | `tool_factory/replace_tool.py` | Ganze Datei durch `source`; Ziel wie bei `read_tool`. |
+| [x] | `rename_tool` | `tool_factory/rename_tool.py` | `.py`-Datei umbenennen (Reload). |
 | [x] | `gmail_search` | `gmail` | Gmail-Suche (IMAP `X-GM-RAW`, z. B. `newer_than:7d is:unread`). |
 | [x] | `gmail_read` | `gmail` | Eine Mail per IMAP-UID lesen (Plain-Text-Body, gekürzt). |
 | [x] | `gmail_collect_for_summary` | `gmail` | Mehrere Mails laden → `combined_excerpt`; Modell fasst für den Nutzer zusammen. |
@@ -54,17 +55,17 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten P
 - Pro Tool: **`description`** + **`parameters`** im OpenAI-Schema (sieht das Modell in jedem Request).
 - Explizit abfragbar: **`list_available_tools`** (Übersicht), **`get_tool_help`** mit `tool_name` (ein Tool ausführlich + kurzer `how_to_use`-Hinweis).
 
-### Dynamisches Extra-Plugin (`plugin_factory/`)
+### Dynamisches Extra-Tool (`tool_factory/`)
 
-- **Zweck:** Tool-Module (`.py` mit `TOOLS`/`HANDLERS`) in **`AGENT_PLUGINS_EXTRA_DIR`** schreiben und Registry neu laden — neue Namen erscheinen danach in **`list_available_tools`**. Sechs eingebaute Hilfs-Tools, je **eine Datei** unter `app/plugins/plugin_factory/` (`create_tool.py`, `list_tools.py`, `read_tool.py`, `update_tool.py`, `replace_tool.py`, `rename_tool.py`); gemeinsame Hilfslogik in `_tool_factory_common.py` (wird von der Registry nicht als Plugin geladen).
+- **Zweck:** Tool-Module (`.py` mit `TOOLS`/`HANDLERS`) in **`AGENT_TOOLS_EXTRA_DIR`** schreiben und Registry neu laden — neue Namen erscheinen danach in **`list_available_tools`**. Sechs eingebaute Hilfs-Tools, je **eine Datei** unter `agent_tools/tool_factory/` (`create_tool.py`, `list_tools.py`, `read_tool.py`, `update_tool.py`, `replace_tool.py`, `rename_tool.py`); gemeinsame Hilfslogik in `_tool_factory_common.py` (wird von der Registry nicht als Tool geladen).
 - **Kurzform (ohne `source`):** Nur **`tool_name`** (oder **`name`**) setzen, z. B. `fishingIndex` — der Server ruft Ollama auf (**`AGENT_CREATE_TOOL_CODEGEN_MODEL`**, Default `qwen2.5-coder:3b`; bei Bedarf z. B. `qwen2.5-coder:7b`), erzeugt ein Modul mit genau einem Tool (Snake-Case-Name + Datei `<name>.py`), validiert, schreibt, **`reload_registry`**, und führt **einen Probelauf** (`run_tool`) mit optional **`test_arguments`** aus. **`description`** optional für genauere Codegen-Hinweise (z. B. Beißindex 0–10).
-- **HTTP-APIs im generierten Plugin:** Standard-Codegen **ohne** Netzwerk (nur Heuristiken). **`AGENT_CREATE_TOOL_CODEGEN_ALLOW_NETWORK=true`** erlaubt im Prompt **httpx** / **urllib**; API-Schlüssel **nur** über **`os.environ`** (z. B. `OPENWEATHER_API_KEY` in `docker/.env` + gleiche Variable im `agent-layer`-Service), **nie** im Chat oder als Klartext im Quelltext. Alternativ: **`create_tool` mit vollem `source`** — der AST-Check blockiert **httpx** nicht; so kannst du Wetter-APIs auch ohne dieses Flag bauen.
-- **Iterieren:** kleine Änderungen mit **`update_tool`** (`old_string`/`new_string`); kompletter Neuinhalt mit **`replace_tool`** (`source`); **`read_tool`** zum Ansehen; **`list_tools`** für Überblick; **`rename_tool`** bei Dateinamen-Wechsel. Kleine Chat-Modelle rufen oft `get_tool_help` für noch nicht existierende Namen auf — Nutzer-Prompt explizit: „Nutze **`create_tool`** mit `tool_name`, nicht `get_tool_help`.“ (**`list_tools`** listet nur Dateien unter `AGENT_PLUGINS_EXTRA_DIR`, nicht die registrierten OpenAI-Tools — dafür **`list_available_tools`**.)
+- **HTTP-APIs im generierten Tool:** Standard-Codegen **ohne** Netzwerk (nur Heuristiken). **`AGENT_CREATE_TOOL_CODEGEN_ALLOW_NETWORK=true`** erlaubt im Prompt **httpx** / **urllib**; API-Schlüssel **nur** über **`os.environ`** (z. B. `OPENWEATHER_API_KEY` in `docker/.env` + gleiche Variable im `agent-layer`-Service), **nie** im Chat oder als Klartext im Quelltext. Alternativ: **`create_tool` mit vollem `source`** — der AST-Check blockiert **httpx** nicht; so kannst du Wetter-APIs auch ohne dieses Flag bauen.
+- **Iterieren:** kleine Änderungen mit **`update_tool`** (`old_string`/`new_string`); kompletter Neuinhalt mit **`replace_tool`** (`source`); **`read_tool`** zum Ansehen; **`list_tools`** für Überblick; **`rename_tool`** bei Dateinamen-Wechsel. Kleine Chat-Modelle rufen oft `get_tool_help` für noch nicht existierende Namen auf — Nutzer-Prompt explizit: „Nutze **`create_tool`** mit `tool_name`, nicht `get_tool_help`.“ (**`list_tools`** listet nur Dateien unter `AGENT_TOOLS_EXTRA_DIR`, nicht die registrierten OpenAI-Tools — dafür **`list_available_tools`**.)
 - **Codegen-Auto-Retry (eingebaut, kein Chat-Goal-Checker):** **`AGENT_CREATE_TOOL_CODEGEN_MAX_ATTEMPTS`** (Default **1** = aus, Maximum **20**) — bei fehlgeschlagener **Validierung** oder fehlgeschlagenem **`test_tool`**-Probe ruft der Server Ollama erneut auf und übergibt den Fehlerkontext. Ersetzt **nicht** `AGENT_MAX_TOOL_ROUNDS` (das sind weiterhin nur Modell-Tool-Schleifen pro Chat-Request).
 - **Klassisch:** **`filename`** + **`source`** wie bisher (voller Quelltext).
-- **Aktivierung:** `AGENT_CREATE_TOOL_ENABLED=true` — wenn **`AGENT_PLUGINS_EXTRA_DIR`** nicht gesetzt ist, verwendet der Agent **`/data/plugins`** (Compose-Volume z. B. **`./extra_plugins:/data/plugins:rw`**). Anderen Pfad nur bei Bedarf setzen. Optional **`AGENT_CREATE_TOOL_MAX_BYTES`** (Default siehe `config.py`).
-- **Allowlist:** Ist **`AGENT_PLUGINS_ALLOWED_SHA256`** gesetzt und der neue Digest **nicht** darin, liefert das Tool `reload: pending` + **`sha256`** — Betreiber ergänzt die Whitelist und ruft **`POST /v1/admin/reload-plugins`** (oder Neustart).
-- **Aufbau des Quelltexts:** Wie `docker/extra_plugins/sample_echo.py`: Modul mit **`TOOLS`** (OpenAI-Function-Liste), **`HANDLERS`** (Name → Callable), Handler-Funktionen mit `def foo(arguments: dict) -> str` und `return json.dumps(...)`. Jedes Element von **`TOOLS`** muss **`{\"type\": \"function\", \"function\": {\"name\": \"…\", \"description\": \"…\", \"parameters\": {...}}}`** sein — der **`name`** gehört **unter** `function`, nicht auf die oberste Ebene des Dicts (häufiger Codegen-Fehler; vor dem Schreiben prüft der Agent `validate_plugin_registry_exports`). AST-Check verbietet u. a. `subprocess`, `eval`/`exec`, `os.system` — **kein vollständiger Sandbox**; nur in vertrauenswürdigen Umgebungen aktivieren (**`AGENT_API_KEY`** empfohlen).
+- **Aktivierung:** `AGENT_CREATE_TOOL_ENABLED=true` — wenn **`AGENT_TOOLS_EXTRA_DIR`** nicht gesetzt ist, verwendet der Agent **`/data/tools`** (Compose-Volume z. B. **`./extra_tools:/data/tools:rw`**). Anderen Pfad nur bei Bedarf setzen. Optional **`AGENT_CREATE_TOOL_MAX_BYTES`** (Default siehe `config.py`).
+- **Allowlist:** Ist **`AGENT_TOOLS_ALLOWED_SHA256`** gesetzt und der neue Digest **nicht** darin, liefert das Tool `reload: pending` + **`sha256`** — Betreiber ergänzt die Whitelist und ruft **`POST /v1/admin/reload-tools`** (oder Neustart).
+- **Aufbau des Quelltexts:** Wie `docker/extra_tools/sample_echo.py`: Modul mit **`TOOLS`** (OpenAI-Function-Liste), **`HANDLERS`** (Name → Callable), Handler-Funktionen mit `def foo(arguments: dict) -> str` und `return json.dumps(...)`. Jedes Element von **`TOOLS`** muss **`{\"type\": \"function\", \"function\": {\"name\": \"…\", \"description\": \"…\", \"parameters\": {...}}}`** sein — der **`name`** gehört **unter** `function`, nicht auf die oberste Ebene des Dicts (häufiger Codegen-Fehler; vor dem Schreiben prüft der Agent `validate_tool_registry_exports`). AST-Check verbietet u. a. `subprocess`, `eval`/`exec`, `os.system` — **kein vollständiger Sandbox**; nur in vertrauenswürdigen Umgebungen aktivieren (**`AGENT_API_KEY`** empfohlen).
 
 **Validiert (manuell / Stack):** Tool-Loop über Agent → Ollama, Einträge in `todos` + `tool_invocations`; Open WebUI mit OpenAI-Base-URL auf den Agent; `stream: true` über SSE-Shim; Tool-Merge mit WebUI-`tools`; Content-JSON-Fallback für Modelle mit `reasoning`-Feld.
 
@@ -91,12 +92,12 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten P
 - **OTP-Sicherheit:** Wer den Chat mitlesen kann, könnte das OTP nutzen — kurz gültig (Standard 10 min), **einmalig**; Befehl zeitnah ausführen.
 - **`secrets_help`:** nur **Erklärung** im Tool-JSON — **kein** OTP, **kein** curl. OTP ausschließlich aus der Antwort von **`register_secrets`**.
 - **Auflisten / Löschen** gespeicherter `service_key`s: HTTP **`GET`** / **`DELETE`** `/v1/user/secrets` mit denselben **User-Headern** wie beim Chat; wenn **`AGENT_API_KEY`** gesetzt ist, zusätzlich **`Authorization: Bearer …`** = **nur** dieser Agent-Key (**niemals** die WebUI-User-ID als Bearer). Für direktes Speichern ohne OTP (Skripte): **`POST`** `/v1/user/secrets` mit denselben Headern — siehe FastAPI-Doku unter dem Agent.
-- **Plugins** (z. B. E-Mail): serverseitig nur `db.user_secret_get_plaintext(user_id, "…")`; **nie** Klartext in Tool-Antworten an das Modell.
+- **Tools** (z. B. E-Mail): serverseitig nur `db.user_secret_get_plaintext(user_id, "…")`; **nie** Klartext in Tool-Antworten an das Modell.
 - **Chat-Hilfe:** **`register_secrets`** zum Speichern; **`secrets_help`** nur zur Orientierung. Optional **`AGENT_PUBLIC_URL`** für die Basis-URL in den `register_secrets`-Vorlagen.
 
-### Gmail (`plugin gmail`)
+### Gmail (`tool gmail`)
 
-- **Pro User** ein Secret mit **`service_key`** = **`gmail`**, Wert = **JSON** (ein String, den das Plugin parst):
+- **Pro User** ein Secret mit **`service_key`** = **`gmail`**, Wert = **JSON** (ein String, den das Tool parst):
   ```json
   {"email":"du@gmail.com","app_password":"xxxxxxxxxxxxxxxx"}
   ```
@@ -105,27 +106,27 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten P
 - **Zugriff:** IMAP **`imap.gmail.com:993`**, Standard-Mailbox **`INBOX`** (Parameter `mailbox` bei Bedarf).
 - **Tools:** **`gmail_search`** (Gmail-Suchsyntax wie in der Web-UI), **`gmail_read`** (`uid` aus der Suche), **`gmail_collect_for_summary`** (mehrere Mails → Auszüge; das **Modell** soll daraus eine Zusammenfassung formulieren). **Keine** Mail-Inhalte absichtlich vollständig spammen: `limit` / `max_body_chars` / `max_messages` beachten.
 
-### GitHub (`plugin github`)
+### GitHub (`tool github`)
 
 - **Token:** Umgebung **`GITHUB_TOKEN`** (Compose-`.env`) für alle Nutzer **oder** pro Nutzer Secret **`github_pat`** mit JSON `{"token":"ghp_…"}` bzw. `github_pat_…` (überschreibt Env). Nur **read-only**-Scopes / Fine-grained PAT empfohlen.
 - **Tools:** **`github_search_code`**, **`github_search_issues`**, **`github_get_file`**, **`github_list_pull_requests`**, **`github_get_issue`** — siehe `get_tool_help`.
 
-### Lokaler Workspace (`plugin workspace`)
+### Lokaler Workspace (`tool workspace`)
 
 - **Nicht dasselbe wie GitHub:** **`github_get_file`** liest über die **GitHub-REST-API** (Remote-Repo, Branch/SHA). Die **`workspace_*`**-Tools arbeiten auf **einem gemounteten Verzeichnis** im Agent-Container (`AGENT_WORKSPACE_ROOT`, absoluter Pfad, z. B. Host-Projekt nach `/workspace`).
 - **Aktivierung:** In `docker/.env` **`AGENT_WORKSPACE_ROOT=/workspace`** (oder anderer Pfad) setzen und in `compose.yaml` ein **Volume** eintragen, z. B. `- /pfad/auf/host:/workspace:rw`. Ohne gültiges Verzeichnis liefern alle `workspace_*`-Calls eine klare Fehlermeldung (`ok: false`).
 - **Sicherheit:** Nur Pfade **unter** dem aufgelösten Root (kein `..`, kein führendes `/` in `path`). Symlinks werden beim Auflösen berücksichtigt — Mount nur vertrauenswürdige Daten. Schreib-Tools können Dateien **zerstören**; Betreiber-Scope wie Shell-Zugriff.
 - **Limits:** u. a. `AGENT_WORKSPACE_MAX_FILE_BYTES`, `AGENT_WORKSPACE_MAX_READ_LINES`, `AGENT_WORKSPACE_SEARCH_MAX_FILE_BYTES` (Suche überspringt größere Dateien), `AGENT_WORKSPACE_MAX_SEARCH_*` / `AGENT_WORKSPACE_MAX_GLOB_FILES` — siehe `docker/.env.example` und `app/config.py`.
 
-### Kalender ICS (`plugin calendar_ics`)
+### Kalender ICS (`tool calendar_ics`)
 
 - **User-Secrets** (gleiches JSON, der Agent probiert **`google_calendar`** zuerst, sonst **`calendar_ics`**):  
   `{"ics_url":"https://…"}`
   - **Google Kalender (ohne OAuth):** [calendar.google.com](https://calendar.google.com) → Zahnrad → **Einstellungen** → gewünschter Kalender in der Liste → **„Geheime Adresse im iCal-Format“** kopieren (URL enthält `calendar.google.com/calendar/ical/…/basic.ics`). Per **`register_secrets`** mit `service_key_example: "google_calendar"` speichern (oder `calendar_ics`). **URL nicht in den Chat** — nur im Terminal/`curl`.
   - **Nextcloud / andere:** öffentliche oder geheime ICS-HTTPS-URL → meist `calendar_ics`.
-- **Tool:** **`calendar_ics_list_events`** — `days_ahead` / `days_back` plus **`months_ahead`** / **`months_back`** (je Monat +31 Tage Fenster) für Überblick über mehrere Monate. Antwort enthält standardmäßig **`by_month`** (`YYYY-MM` → Anzahl + Titel). `include_by_month: false` zum Kürzen. **Ohne Secret** (bei gesetztem **`AGENT_SECRETS_MASTER_KEY`**) liefert die Antwort zusätzlich **`otp_registration`** für **`google_calendar`** (wie `register_secrets`) — oft **ein** Tool-Call genug. Kleine Modelle (z. B. Nemotron) liefern manchmal falsch geschriebene Argumentnamen (`monthsahead` …) — das Plugin mappt die gängigen Varianten mit. Kein Schreiben; kein Google Calendar API / OAuth.
+- **Tool:** **`calendar_ics_list_events`** — `days_ahead` / `days_back` plus **`months_ahead`** / **`months_back`** (je Monat +31 Tage Fenster) für Überblick über mehrere Monate. Antwort enthält standardmäßig **`by_month`** (`YYYY-MM` → Anzahl + Titel). `include_by_month: false` zum Kürzen. **Ohne Secret** (bei gesetztem **`AGENT_SECRETS_MASTER_KEY`**) liefert die Antwort zusätzlich **`otp_registration`** für **`google_calendar`** (wie `register_secrets`) — oft **ein** Tool-Call genug. Kleine Modelle (z. B. Nemotron) liefern manchmal falsch geschriebene Argumentnamen (`monthsahead` …) — das Tool mappt die gängigen Varianten mit. Kein Schreiben; kein Google Calendar API / OAuth.
 
-### Notizen / KB (`plugin kb`)
+### Notizen / KB (`tool kb`)
 
 - Tabelle **`user_kb_notes`** (Migration 5): Volltext-Spalte + ILIKE-Suche.
 - **Tools:** **`kb_append_note`**, **`kb_search_notes`**, **`kb_read_note`** — persönlicher „second brain“ ohne Embeddings. Später optional **pgvector** ergänzen.
@@ -136,15 +137,15 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten P
 
 | Status | Tool / Paket | Hinweis |
 |--------|----------------|---------|
-| [x] | GitHub Search / Repo-Read | Plugin `github`; Env `GITHUB_TOKEN` oder Secret `github_pat`. |
+| [x] | GitHub Search / Repo-Read | Tool `github`; Env `GITHUB_TOKEN` oder Secret `github_pat`. |
 | [x] | HTTP-Fetch + robots.txt + noindex | `deep_search` ohne Tavily; optionale Allowlist via Env. |
 | [ ] | Weitere Search-Provider (SerpAPI, …) | Optional ergänzen. |
-| [x] | Lokaler Workspace (Mount, read/write) | Plugin `workspace`; `AGENT_WORKSPACE_ROOT` + Volume. |
+| [x] | Lokaler Workspace (Mount, read/write) | Tool `workspace`; `AGENT_WORKSPACE_ROOT` + Volume. |
 | [ ] | Home Assistant / MQTT | Topic-Whitelist. |
 | [ ] | RAG mit Embeddings (pgvector, …) | Aktuell: `kb_*` mit Postgres FTS; Embeddings optional. |
 | [ ] | Kalender CalDAV (Lesen/Schreiben) | Aktuell nur ICS-URL read-only. |
 
-*(Status hier anpassen, sobald ein Plugin gemerged und einmal gegen euren Stack getestet ist.)*
+*(Status hier anpassen, sobald ein Tool gemerged und einmal gegen euren Stack getestet ist.)*
 
 ---
 
@@ -153,11 +154,11 @@ Implementierung: `*.py`-Module mit `TOOLS` + `HANDLERS` unter **konfigurierten P
 Empfehlung: **eine** `docker/.env` (von `.env.example` kopieren), **nicht** committen.
 
 - **Heute:** meist nur Postgres/Ollama/Agent-Settings (`DATABASE_URL`, `OLLAMA_BASE_URL`, `AGENT_API_KEY`, …).
-- **Web-Suche:** optional `TAVILY_API_KEY` / `BRAVE_SEARCH_API_KEY`; ohne Keys nutzt das Plugin **[ddgs](https://pypi.org/project/ddgs/)** (Metasuche, u. a. Bing/DuckDuckGo-Backends; ohne Vertrag, Rate-Limits möglich). Abschalten: `AGENT_DISABLE_DDG_SEARCH=true`. Zusätzlich `AGENT_SEARCH_TIMEOUT`, `AGENT_SEARCH_MAX_RAW_CHARS`.
+- **Web-Suche:** optional `TAVILY_API_KEY` / `BRAVE_SEARCH_API_KEY`; ohne Keys nutzt das Tool **[ddgs](https://pypi.org/project/ddgs/)** (Metasuche, u. a. Bing/DuckDuckGo-Backends; ohne Vertrag, Rate-Limits möglich). Abschalten: `AGENT_DISABLE_DDG_SEARCH=true`. Zusätzlich `AGENT_SEARCH_TIMEOUT`, `AGENT_SEARCH_MAX_RAW_CHARS`.
 - **deep_search ohne Tavily:** pro Treffer optional **HTTP-GET** der URL, nur wenn `robots.txt` für `AGENT_FETCH_USER_AGENT` (Default: `JetpackAgentLayer/…`) **kein** `Disallow` setzt; sonst `fetch_status=robots_disallowed`, kein Abruf. **`AGENT_ROBOTS_STRICT=true`:** wenn `robots.txt` nicht lesbar ist, wird **nicht** gefetcht (Default: in dem Fall wie „keine Regeln“ behandelt). **`AGENT_DISABLE_FETCH_DEEP=true`:** nur Snippets. **`AGENT_FETCH_MAX_BYTES`:** max. Antwortgröße (Default 2 MB). **`AGENT_ROBOTS_CACHE_TTL`:** Cache für `robots.txt` pro Origin (Sekunden). Loopback/Link-Local/Metadata-Hosts werden nicht abgerufen (Basis-SSRF-Schutz). **`AGENT_RESPECT_META_ROBOTS`** (Default `true`): bei **`X-Robots-Tag`** oder **`<meta name="robots" content="…">`** mit **`noindex`** oder **`none`** wird **kein** `raw_content` geliefert (`fetch_status` z. B. `x_robots_noindex` / `meta_robots_noindex`). **`AGENT_FETCH_DOMAIN_ALLOWLIST`:** wenn gesetzt (kommagetrennte Hostnamen), nur noch diese Hosts und ihre Subdomains — alles andere `blocked_allowlist` (reduziert SSRF + Scope).
 - **GitHub:** `GITHUB_TOKEN` in `docker/.env` (siehe `.env.example`) **oder** Nutzer registriert `github_pat` per `register_secrets`.
 - **Kalender:** kein Env — User-Secret `google_calendar` oder `calendar_ics` mit `{"ics_url":"https://…"}` (Google: geheime iCal-Adresse).
-- **Weitere Beispiele:** `SERPAPI_API_KEY=…` — im jeweiligen Plugin aus `os.environ` lesen.
+- **Weitere Beispiele:** `SERPAPI_API_KEY=…` — im jeweiligen Tool aus `os.environ` lesen.
 
 Für Produktion alternativ **NixOS sops-nix** / Secrets-Store statt flacher `.env`.
 
@@ -186,20 +187,20 @@ Für Produktion alternativ **NixOS sops-nix** / Secrets-Store statt flacher `.en
 
 ### Bereits woanders im Repo
 
-- Whisper / faster-whisper / ComfyUI als **eigene** Services; der Agent kann sie per HTTP-Tool ansprechen, falls du ein Plugin dafür schreibst.
+- Whisper / faster-whisper / ComfyUI als **eigene** Services; der Agent kann sie per HTTP-Tool ansprechen, falls du ein Tool dafür schreibst.
 
 ---
 
-## Plugin-Vertrag (Kurz)
+## Tool-Vertrag (Kurz)
 
 ```text
 TOOLS: list[dict]          # OpenAI function specs
 HANDLERS: dict[str, callable]  # name -> fn(args: dict) -> str (JSON-String)
-PLUGIN_ID: str             # optional
+TOOL_ID: str             # optional
 __version__: str           # optional
 ```
 
-Reload Built-in + Extra: `POST /v1/admin/reload-plugins?scope=all|extra`.
+Reload Built-in + Extra: `POST /v1/admin/reload-tools?scope=all|extra`.
 
 ---
 

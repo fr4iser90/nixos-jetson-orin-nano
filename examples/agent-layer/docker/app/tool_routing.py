@@ -1,4 +1,4 @@
-"""Tool subsetting by mode (plugin_factory / workspace / default_chat / full) + optional router + retry narrowing."""
+"""Tool subsetting by mode (tool_factory / workspace / default_chat / full) + optional router + retry narrowing."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Built-in dynamic-plugin tools (file under AGENT_PLUGINS_EXTRA_DIR).
-PLUGIN_FACTORY_CORE: frozenset[str] = frozenset(
+# Built-in dynamic-tool tools (file under AGENT_TOOLS_EXTRA_DIR).
+TOOL_FACTORY_CORE: frozenset[str] = frozenset(
     {
         "create_tool",
         "list_tools",
@@ -23,7 +23,7 @@ PLUGIN_FACTORY_CORE: frozenset[str] = frozenset(
 
 TOOL_INTROSPECTION: frozenset[str] = frozenset({"list_available_tools", "get_tool_help"})
 
-VALID_MODES = frozenset({"full", "plugin_factory", "workspace", "default_chat", "default"})
+VALID_MODES = frozenset({"full", "tool_factory", "workspace", "default_chat", "default"})
 
 
 def normalize_mode(raw: str | None) -> str:
@@ -49,7 +49,7 @@ def filter_tools_for_mode(
     tools: list[Any],
     mode: str,
     *,
-    plugin_factory_includes_help: bool,
+    tool_factory_includes_help: bool,
 ) -> list[Any]:
     """Return a filtered copy of OpenAI-style tool specs."""
     m = normalize_mode(mode)
@@ -62,9 +62,9 @@ def filter_tools_for_mode(
         if not name:
             out.append(spec)
             continue
-        if m == "plugin_factory":
-            allow = set(PLUGIN_FACTORY_CORE)
-            if plugin_factory_includes_help:
+        if m == "tool_factory":
+            allow = set(TOOL_FACTORY_CORE)
+            if tool_factory_includes_help:
                 allow |= TOOL_INTROSPECTION
             if name in allow:
                 out.append(spec)
@@ -72,7 +72,7 @@ def filter_tools_for_mode(
             if name.startswith("workspace_"):
                 out.append(spec)
         elif m == "default_chat":
-            if name not in PLUGIN_FACTORY_CORE and not name.startswith("workspace_"):
+            if name not in TOOL_FACTORY_CORE and not name.startswith("workspace_"):
                 out.append(spec)
         else:
             out.append(spec)
@@ -89,7 +89,7 @@ def apply_weak_model_tool_strip(
     """
     Remove tool specs whose OpenAI ``name`` is in ``exclude_names`` when ``model`` matches a weak substring.
 
-    Used in ``plugin_factory`` mode so tiny models are nudged toward ``replace_tool`` / ``create_tool``.
+    Used in ``tool_factory`` mode so tiny models are nudged toward ``replace_tool`` / ``create_tool``.
     """
     if not tools or not model or not substrings or not exclude_names:
         return list(tools)
@@ -133,18 +133,18 @@ def last_user_text(messages: list[dict[str, Any]]) -> str:
 def classify_mode_by_keywords(
     text: str,
     *,
-    plugin_substrings: list[str],
+    tool_substrings: list[str],
     workspace_substrings: list[str],
 ) -> str | None:
     if not text.strip():
         return None
     tl = text.lower()
-    p_hit = any(s.strip() and s.strip().lower() in tl for s in plugin_substrings if s.strip())
+    p_hit = any(s.strip() and s.strip().lower() in tl for s in tool_substrings if s.strip())
     w_hit = any(s.strip() and s.strip().lower() in tl for s in workspace_substrings if s.strip())
     if p_hit and w_hit:
         return None
     if p_hit:
-        return "plugin_factory"
+        return "tool_factory"
     if w_hit:
         return "workspace"
     return None
@@ -189,11 +189,11 @@ async def classify_mode_by_llm(
 
     system = (
         "You are a router. Reply with ONE JSON object only, no markdown, no prose. "
-        'Schema: {"mode":"<one of: full, plugin_factory, workspace, default_chat>"}.\n'
-        "plugin_factory: user edits/creates Python agent plugins under the extra plugin directory "
+        'Schema: {"mode":"<one of: full, tool_factory, workspace, default_chat>"}.\n'
+        "tool_factory: user edits/creates Python agent tools under the extra tool directory "
         "(create_tool, read_tool, update_tool, replace_tool, dynamic tools).\n"
         "workspace: user edits files in the mounted workspace (workspace_* tools only).\n"
-        "default_chat: normal chat, todos, web, email, github, kb — no plugin file authoring, no workspace files.\n"
+        "default_chat: normal chat, todos, web, email, github, kb — no tool file authoring, no workspace files.\n"
         "full: unclear or needs everything.\n"
     )
     user = f"Classify this user message:\n{user_text[:6000]}"
@@ -221,12 +221,12 @@ async def classify_mode_by_llm(
     if not isinstance(content, str):
         return None
     mode = _extract_json_mode(content)
-    if mode in ("plugin_factory", "workspace", "default_chat", "full"):
+    if mode in ("tool_factory", "workspace", "default_chat", "full"):
         return mode
     return None
 
 
-def workspace_error_suggests_plugin_path(result: str) -> bool:
+def workspace_error_suggests_tool_path(result: str) -> bool:
     """True if a workspace_* tool failed because workspace is not configured."""
     s = (result or "").lower()
     needles = (
@@ -243,5 +243,5 @@ def workspace_error_suggests_plugin_path(result: str) -> bool:
 def should_narrow_after_tool_result(tool_name: str, result: str) -> bool:
     return bool(
         tool_name.startswith("workspace_")
-        and workspace_error_suggests_plugin_path(result)
+        and workspace_error_suggests_tool_path(result)
     )

@@ -19,7 +19,7 @@ from . import db
 from . import identity
 from .agent import chat_completion
 from .http_identity import resolve_user_tenant
-from .plugins_api import router as plugins_router
+from .tools_api import router as tools_router
 from .registry import get_registry
 from .user_secrets_api import router as user_secrets_router
 
@@ -38,7 +38,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="agent-layer", version="0.6.0", lifespan=lifespan)
 app.include_router(user_secrets_router)
-app.include_router(plugins_router)
+app.include_router(tools_router)
 
 _cors_origins = [
     o.strip() for o in os.environ.get("AGENT_CORS_ORIGINS", "*").split(",") if o.strip()
@@ -210,12 +210,12 @@ async def chat_completions(request: Request):
     return result
 
 
-@app.post("/v1/chat/completions/plugin-factory")
-async def chat_completions_plugin_factory(request: Request):
+@app.post("/v1/chat/completions/tool-factory")
+async def chat_completions_tool_factory(request: Request):
     """
-    Like ``/v1/chat/completions`` but **always** uses tool mode ``plugin_factory`` (dynamic plugins + optional help tools).
+    Like ``/v1/chat/completions`` but **always** uses tool mode ``tool_factory`` (dynamic tools + optional help tools).
 
-    Optional JSON ``plugin_prefetch``: ``{"openai_tool_name": "fishing_index"}`` or ``{"filename": "fishing_index.py"}`` —
+    Optional JSON ``tool_prefetch``: ``{"openai_tool_name": "fishing_index"}`` or ``{"filename": "fishing_index.py"}`` —
     the server runs ``read_tool`` once and prepends the source to the system prompt.
 
     ``X-Agent-Mode`` does **not** override this endpoint; use the main completions URL if you need another mode.
@@ -225,7 +225,7 @@ async def chat_completions_plugin_factory(request: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="invalid JSON body")
 
-    body["agent_tool_mode"] = "plugin_factory"
+    body["agent_tool_mode"] = "tool_factory"
 
     want_stream = bool(body.get("stream"))
     work = dict(body)

@@ -10,7 +10,7 @@ def normalize_tool_mode(raw: str | None) -> str:
     s = (raw or "").strip().lower()
     if s == "default":
         return "default_chat"
-    if s in ("full", "plugin_factory", "workspace", "default_chat"):
+    if s in ("full", "tool_factory", "workspace", "default_chat"):
         return s
     return "full"
 
@@ -40,17 +40,17 @@ SYSTEM_PROMPT_EXTRA = os.environ.get("AGENT_SYSTEM_PROMPT", "").strip()
 CONTENT_TOOL_FALLBACK = _env_bool("AGENT_CONTENT_TOOL_FALLBACK", True)
 
 # --- Tool routing (subset by mode; header X-Agent-Mode overrides) ---
-# full | plugin_factory | workspace | default_chat (alias: default)
+# full | tool_factory | workspace | default_chat (alias: default)
 AGENT_TOOL_MODE = normalize_tool_mode(os.environ.get("AGENT_TOOL_MODE", "full"))
 
-AGENT_TOOL_MODE_PLUGIN_FACTORY_INCLUDES_HELP = _env_bool(
-    "AGENT_TOOL_MODE_PLUGIN_FACTORY_INCLUDES_HELP", True
+AGENT_TOOL_MODE_TOOL_FACTORY_INCLUDES_HELP = _env_bool(
+    "AGENT_TOOL_MODE_TOOL_FACTORY_INCLUDES_HELP", True
 )
 # If no X-Agent-Mode / JSON agent_tool_mode: keyword substring match on last user message
 AGENT_TOOL_ROUTER_KEYWORDS_ENABLED = _env_bool("AGENT_TOOL_ROUTER_KEYWORDS_ENABLED", True)
 # Comma-separated case-insensitive substrings (empty = use built-in defaults in agent)
-AGENT_TOOL_ROUTER_KEYWORDS_PLUGIN_FACTORY = os.environ.get(
-    "AGENT_TOOL_ROUTER_KEYWORDS_PLUGIN_FACTORY", ""
+AGENT_TOOL_ROUTER_KEYWORDS_TOOL_FACTORY = os.environ.get(
+    "AGENT_TOOL_ROUTER_KEYWORDS_TOOL_FACTORY", ""
 ).strip()
 AGENT_TOOL_ROUTER_KEYWORDS_WORKSPACE = os.environ.get(
     "AGENT_TOOL_ROUTER_KEYWORDS_WORKSPACE", ""
@@ -58,12 +58,12 @@ AGENT_TOOL_ROUTER_KEYWORDS_WORKSPACE = os.environ.get(
 # Optional second stage: one short Ollama call when keywords are inconclusive
 AGENT_TOOL_ROUTER_LLM_ENABLED = _env_bool("AGENT_TOOL_ROUTER_LLM_ENABLED", False)
 AGENT_TOOL_ROUTER_MODEL = (os.environ.get("AGENT_TOOL_ROUTER_MODEL") or "").strip()
-# After workspace_* fails with "disabled", narrow remaining rounds to plugin_factory tools
-AGENT_TOOL_RETRY_NARROW_TO_PLUGIN_FACTORY = _env_bool(
-    "AGENT_TOOL_RETRY_NARROW_TO_PLUGIN_FACTORY", True
+# After workspace_* fails with "disabled", narrow remaining rounds to tool_factory tools
+AGENT_TOOL_RETRY_NARROW_TO_TOOL_FACTORY = _env_bool(
+    "AGENT_TOOL_RETRY_NARROW_TO_TOOL_FACTORY", True
 )
 
-# In plugin_factory mode: if chat ``model`` id contains any substring (case-insensitive), drop listed tools.
+# In tool_factory mode: if chat ``model`` id contains any substring (case-insensitive), drop listed tools.
 # Small models fail at exact old_string patches; replace_tool / create_tool work better.
 def _weak_tool_model_substrings() -> list[str]:
     raw = (os.environ.get("AGENT_WEAK_TOOL_MODEL_SUBSTRINGS") or "nemotron,nano").strip()
@@ -110,20 +110,20 @@ def _resolve_database_url() -> str:
 # postgresql://USER:PASSWORD@HOST:5432/DBNAME
 DATABASE_URL = _resolve_database_url()
 
-# Extra plugin tree (optional): scan + create_tool writes here. Two different concerns:
+# Extra tool tree (optional): scan + create_tool writes here. Two different concerns:
 # - ENABLE = whether create_tool may run (security / ops).
 # - DIR = filesystem path (must exist in the container; Docker still needs a volume mount for a host folder).
-# If ENABLE is true and AGENT_PLUGINS_EXTRA_DIR is unset/empty, default /data/plugins (typical compose mount target).
+# If ENABLE is true and AGENT_TOOLS_EXTRA_DIR is unset/empty, default /data/tools (typical compose mount target).
 CREATE_TOOL_ENABLED = _env_bool("AGENT_CREATE_TOOL_ENABLED", False)
-_PLUGINS_EXTRA_RAW = (os.environ.get("AGENT_PLUGINS_EXTRA_DIR") or "").strip()
-PLUGINS_EXTRA_DIR = _PLUGINS_EXTRA_RAW or ("/data/plugins" if CREATE_TOOL_ENABLED else "")
+_TOOLS_EXTRA_RAW = (os.environ.get("AGENT_TOOLS_EXTRA_DIR") or "").strip()
+TOOLS_EXTRA_DIR = _TOOLS_EXTRA_RAW or ("/data/tools" if CREATE_TOOL_ENABLED else "")
 
 
-def plugin_scan_directories() -> list[Path]:
+def tool_scan_directories() -> list[Path]:
     """
-    Plugin **roots** to scan **recursively** for ``*.py`` (TOOLS + HANDLERS), including subfolders.
-    If ``AGENT_PLUGIN_DIRS`` is set (comma-separated), only those paths are used (must exist).
-    Otherwise: shipped ``app/plugins`` tree, then ``AGENT_PLUGINS_EXTRA_DIR`` if set.
+    Tool **roots** to scan **recursively** for ``*.py`` (TOOLS + HANDLERS), including subfolders.
+    If ``AGENT_TOOL_DIRS`` is set (comma-separated), only those paths are used (must exist).
+    Otherwise: shipped ``agent_tools`` tree (sibling of the ``app`` package), then ``AGENT_TOOLS_EXTRA_DIR`` if set.
     Earlier roots / lexicographically earlier paths win when two files define the same tool name.
     """
     out: list[Path] = []
@@ -133,7 +133,7 @@ def plugin_scan_directories() -> list[Path]:
         try:
             r = p.resolve()
         except OSError:
-            logger.warning("plugin directory not resolvable: %s", p)
+            logger.warning("tool directory not resolvable: %s", p)
             return
         if not r.is_dir():
             return
@@ -142,21 +142,21 @@ def plugin_scan_directories() -> list[Path]:
             seen.add(key)
             out.append(r)
 
-    raw = (os.environ.get("AGENT_PLUGIN_DIRS") or "").strip()
+    raw = (os.environ.get("AGENT_TOOL_DIRS") or "").strip()
     if raw:
         for part in raw.split(","):
             add(Path(part.strip()).expanduser())
         return out
-    import app as ap
 
-    add(Path(ap.__path__[0]) / "plugins")
-    if PLUGINS_EXTRA_DIR:
-        add(Path(PLUGINS_EXTRA_DIR).expanduser())
+    # Repo layout: examples/agent-layer/docker/{app,agent_tools}; image WORKDIR /app.
+    add(Path(__file__).resolve().parent.parent / "agent_tools")
+    if TOOLS_EXTRA_DIR:
+        add(Path(TOOLS_EXTRA_DIR).expanduser())
     return out
 
 
 # Comma-separated SHA256 hex digests (64 chars). If set, each extra *.py must match one entry.
-# Read on each extra-plugin scan (reload) so container env updates take effect without code change.
+# Read on each extra-tool scan (reload) so container env updates take effect without code change.
 # Multi-tenant HTTP: stable user id per request (comma-separated header names; first non-empty wins).
 # Default fits Open WebUI with ENABLE_FORWARD_USER_INFO_HEADERS=true (X-OpenWebUI-User-Id).
 # Without AGENT_API_KEY, clients can spoof headers.
@@ -182,7 +182,7 @@ SECRETS_MASTER_KEY = (os.environ.get("AGENT_SECRETS_MASTER_KEY") or "").strip()
 PUBLIC_BASE_URL = (os.environ.get("AGENT_PUBLIC_URL") or "").strip().rstrip("/")
 HTTP_EXAMPLE_PORT = (os.environ.get("AGENT_HTTP_PORT") or "8088").strip() or "8088"
 
-# Local files plugin (workspace_*): set to an absolute path inside the container and mount it (compose volume).
+# Local files tool (workspace_*): set to an absolute path inside the container and mount it (compose volume).
 WORKSPACE_ROOT = (os.environ.get("AGENT_WORKSPACE_ROOT") or "").strip()
 WORKSPACE_MAX_FILE_BYTES = _env_int("AGENT_WORKSPACE_MAX_FILE_BYTES", 1_200_000)
 WORKSPACE_MAX_LIST_ENTRIES = _env_int("AGENT_WORKSPACE_MAX_LIST_ENTRIES", 500)
@@ -192,7 +192,7 @@ WORKSPACE_SEARCH_MAX_FILE_BYTES = _env_int("AGENT_WORKSPACE_SEARCH_MAX_FILE_BYTE
 WORKSPACE_MAX_GLOB_FILES = _env_int("AGENT_WORKSPACE_MAX_GLOB_FILES", 2000)
 WORKSPACE_MAX_READ_LINES = _env_int("AGENT_WORKSPACE_MAX_READ_LINES", 8000)
 
-# create_tool limits / codegen (CREATE_TOOL_ENABLED is set above with PLUGINS_EXTRA_DIR).
+# create_tool limits / codegen (CREATE_TOOL_ENABLED is set above with TOOLS_EXTRA_DIR).
 CREATE_TOOL_MAX_BYTES = _env_int("AGENT_CREATE_TOOL_MAX_BYTES", 120_000)
 # When create_tool is called without ``source``, Ollama generates the module (same base URL as chat).
 CREATE_TOOL_CODEGEN_MODEL = (
@@ -213,8 +213,8 @@ def tool_log_redact_keys() -> frozenset[str]:
     return frozenset(k.strip() for k in raw.split(",") if k.strip())
 
 
-def plugins_allowed_sha256() -> frozenset[str] | None:
-    raw = os.environ.get("AGENT_PLUGINS_ALLOWED_SHA256", "").strip()
+def tools_allowed_sha256() -> frozenset[str] | None:
+    raw = os.environ.get("AGENT_TOOLS_ALLOWED_SHA256", "").strip()
     if not raw:
         return None
     digests = frozenset(p.strip().lower() for p in raw.split(",") if p.strip())

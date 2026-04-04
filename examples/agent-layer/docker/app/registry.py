@@ -1,4 +1,4 @@
-"""Load tool plugins only from configured directories (``*.py`` files); no package hardcoding."""
+"""Load tool tools only from configured directories (``*.py`` files); no package hardcoding."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ def _path_under_or_equal(child: Path, parent: Path) -> bool:
         return False
 
 
-def _iter_plugin_py_files(root: Path) -> list[Path]:
+def _iter_tool_py_files(root: Path) -> list[Path]:
     """All ``*.py`` under ``root`` (recursive), excluding ``__init__.py``, ``_*``, ``__pycache__``."""
     out: list[Path] = []
     for path in sorted(root.rglob("*.py")):
@@ -58,31 +58,31 @@ def _stable_module_slug(directory: Path, path: Path, dir_idx: int) -> str:
         rel = Path(path.name)
     rel_no_suffix = rel.with_suffix("")
     parts = [re.sub(r"[^a-zA-Z0-9_]", "_", str(p)) for p in rel_no_suffix.parts]
-    slug = "_".join(p for p in parts if p).strip("_") or "plugin"
+    slug = "_".join(p for p in parts if p).strip("_") or "tool"
     if slug and slug[0].isdigit():
         slug = f"m_{slug}"
     return f"{dir_idx}_{slug}"
 
 
 class ToolRegistry:
-    """Scans ``AGENT_PLUGIN_DIRS`` or default ``app/plugins`` + optional extra mount."""
+    """Scans ``AGENT_TOOL_DIRS`` or default ``agent_tools`` + optional extra mount."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._handlers: dict[str, Handler] = {}
         self._openai_tools: list[dict[str, Any]] = []
-        self._plugins_meta: list[dict[str, Any]] = []
+        self._tools_meta: list[dict[str, Any]] = []
 
     def load_all(self) -> None:
         with self._lock:
             self._clear_storage()
-            self._purge_dynamic_plugin_modules()
+            self._purge_dynamic_tool_modules()
             acc_h: dict[str, Handler] = {}
             acc_tools: list[dict[str, Any]] = []
             acc_meta: list[dict[str, Any]] = []
 
-            allow = config.plugins_allowed_sha256()
-            extra_raw = (config.PLUGINS_EXTRA_DIR or "").strip()
+            allow = config.tools_allowed_sha256()
+            extra_raw = (config.TOOLS_EXTRA_DIR or "").strip()
             extra_root: Path | None = None
             if extra_raw:
                 try:
@@ -90,19 +90,19 @@ class ToolRegistry:
                 except OSError:
                     extra_root = Path(extra_raw).expanduser()
 
-            dirs = config.plugin_scan_directories()
+            dirs = config.tool_scan_directories()
             if not dirs:
-                logger.warning("no plugin directories to scan (set AGENT_PLUGIN_DIRS or ship app/plugins)")
+                logger.warning("no tool directories to scan (set AGENT_TOOL_DIRS or ship agent_tools)")
 
             for dir_idx, directory in enumerate(dirs):
                 if not directory.is_dir():
-                    logger.warning("skip missing plugin directory: %s", directory)
+                    logger.warning("skip missing tool directory: %s", directory)
                     continue
-                for path in _iter_plugin_py_files(directory):
+                for path in _iter_tool_py_files(directory):
                     try:
                         data = path.read_bytes()
                     except OSError:
-                        logger.exception("cannot read plugin file %s", path)
+                        logger.exception("cannot read tool file %s", path)
                         continue
                     digest = hashlib.sha256(data).hexdigest()
                     try:
@@ -117,22 +117,22 @@ class ToolRegistry:
                     )
                     if needs_sha and digest not in allow:
                         logger.error(
-                            "rejecting plugin (not in AGENT_PLUGINS_ALLOWED_SHA256): %s",
+                            "rejecting tool (not in AGENT_TOOLS_ALLOWED_SHA256): %s",
                             path,
                         )
                         continue
                     slug = _stable_module_slug(directory, path, dir_idx)
-                    mod_name = f"agent_plugin_{slug}"
+                    mod_name = f"agent_tool_{slug}"
                     try:
                         spec = importlib.util.spec_from_file_location(mod_name, path)
                         if spec is None or spec.loader is None:
-                            logger.error("cannot load plugin spec: %s", path)
+                            logger.error("cannot load tool spec: %s", path)
                             continue
                         mod = importlib.util.module_from_spec(spec)
                         sys.modules[mod_name] = mod
                         spec.loader.exec_module(mod)
                     except Exception:
-                        logger.exception("failed to load plugin %s", path)
+                        logger.exception("failed to load tool %s", path)
                         continue
                     self._register_module(
                         mod,
@@ -145,16 +145,16 @@ class ToolRegistry:
 
             self._handlers = acc_h
             self._openai_tools = acc_tools
-            self._plugins_meta = acc_meta
+            self._tools_meta = acc_meta
 
     def _clear_storage(self) -> None:
         self._handlers.clear()
         self._openai_tools.clear()
-        self._plugins_meta.clear()
+        self._tools_meta.clear()
 
-    def _purge_dynamic_plugin_modules(self) -> None:
+    def _purge_dynamic_tool_modules(self) -> None:
         for key in list(sys.modules):
-            if key.startswith("agent_plugin_"):
+            if key.startswith("agent_tool_"):
                 del sys.modules[key]
 
     def _register_module(
@@ -173,11 +173,11 @@ class ToolRegistry:
             return
         if not isinstance(mod_tools, list) or not isinstance(mod_handlers, dict):
             logger.error(
-                "invalid plugin exports (need TOOLS list and HANDLERS dict): %s", source
+                "invalid tool exports (need TOOLS list and HANDLERS dict): %s", source
             )
             return
 
-        pid = getattr(mod, "PLUGIN_ID", None) or getattr(mod, "__name__", "unknown")
+        pid = getattr(mod, "TOOL_ID", None) or getattr(mod, "__name__", "unknown")
         ver = str(getattr(mod, "__version__", "0"))
         tool_names: list[str] = []
         pending_handlers: dict[str, Handler] = {}
@@ -193,7 +193,7 @@ class ToolRegistry:
                 continue
             if name in handlers or name in pending_handlers:
                 logger.warning(
-                    "skip duplicate tool %r in %s (earlier plugin wins)",
+                    "skip duplicate tool %r in %s (earlier tool wins)",
                     name,
                     source,
                 )
@@ -216,7 +216,7 @@ class ToolRegistry:
         if not tool_names:
             if mod_handlers:
                 logger.warning(
-                    "plugin %s exports HANDLERS but no valid TOOLS entries",
+                    "tool %s exports HANDLERS but no valid TOOLS entries",
                     source,
                 )
             return
@@ -224,7 +224,7 @@ class ToolRegistry:
         for declared in mod_handlers:
             if declared not in tool_names:
                 logger.warning(
-                    "plugin %s declares handler %r without matching TOOLS entry",
+                    "tool %s declares handler %r without matching TOOLS entry",
                     source,
                     declared,
                 )
@@ -239,7 +239,7 @@ class ToolRegistry:
             entry["sha256"] = file_sha256
         meta.append(entry)
         logger.info(
-            "loaded plugin %s v%s (%d tools) [%s]", pid, ver, len(tool_names), source
+            "loaded tool %s v%s (%d tools) [%s]", pid, ver, len(tool_names), source
         )
 
     @property
@@ -248,9 +248,9 @@ class ToolRegistry:
             return list(self._openai_tools)
 
     @property
-    def plugins_meta(self) -> list[dict[str, Any]]:
+    def tools_meta(self) -> list[dict[str, Any]]:
         with self._lock:
-            return list(self._plugins_meta)
+            return list(self._tools_meta)
 
     def run_tool(self, name: str, arguments: dict[str, Any]) -> str:
         with self._lock:
@@ -284,7 +284,7 @@ def get_registry() -> ToolRegistry:
 
 
 def reload_registry(scope: str = "all") -> ToolRegistry:
-    """Full rescan of plugin directories. ``scope`` is kept for API compatibility only."""
+    """Full rescan of tool directories. ``scope`` is kept for API compatibility only."""
     global _registry
     s = (scope or "all").strip().lower()
     if s not in ("all", "extra"):

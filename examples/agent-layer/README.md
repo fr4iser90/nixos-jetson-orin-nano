@@ -1,13 +1,13 @@
 # Agent layer
 
-OpenAI-kompatible API (FastAPI) vor **Ollama**: führt **Tool Calls** lokal aus (PostgreSQL, Plugins), merged Tool-Listen mit Open WebUI, optional **JSON-im-Content-Fallback** für Reasoning-Modelle, und **SSE**, wenn Clients `stream: true` senden.
+OpenAI-kompatible API (FastAPI) vor **Ollama**: führt **Tool Calls** lokal aus (PostgreSQL, Tools), merged Tool-Listen mit Open WebUI, optional **JSON-im-Content-Fallback** für Reasoning-Modelle, und **SSE**, wenn Clients `stream: true` senden.
 
 ## Architektur
 
 ```text
 Open WebUI / curl  →  agent-layer:8080/v1  →  Ollama :11434
                             │
-                            ├─ Plugins (app/plugins/, optional extra dir)
+                            ├─ Tools (agent_tools/, optional extra dir)
                             └─ PostgreSQL (Todos, tool_invocations)
 ```
 
@@ -50,7 +50,7 @@ docker compose build && docker compose up -d
 ```
 
 - Health: `curl -s http://127.0.0.1:8088/health`
-- Tools: `curl -s http://127.0.0.1:8088/v1/tools | jq .plugins`
+- Tools: `curl -s http://127.0.0.1:8088/v1/tools | jq .tools`
 
 ## Open WebUI
 
@@ -73,11 +73,11 @@ Trage **keine Secrets** in `.env.example` ein; nur in **`.env`** (Root-`.gitigno
 
 Weitere Variablen: siehe `docker/.env.example` (`OLLAMA_BASE_URL`, `AGENT_HTTP_PORT`, `AGENT_*`, künftige Tool-API-Keys).
 
-## Plugins
+## Tools
 
-- **Laden:** Die Registry scannt Plugin-Wurzeln **rekursiv** nach `*.py` (Domänen-Ordner unter `docker/app/plugins/`, z. B. `github/`, `secrets/`, `calendar/`). Standard-Wurzel: `app/plugins` im Image, optional `AGENT_PLUGINS_EXTRA_DIR`. Mit **`AGENT_PLUGIN_DIRS`** (Komma-Liste) steuerst du die Wurzeln selbst.
-- **Pro Datei:** `TOOLS` + `HANDLERS`, optional `PLUGIN_ID`, `__version__` — siehe [TOOLS.md](./TOOLS.md).
-- **Reload:** `POST /v1/admin/reload-plugins` (mit `AGENT_API_KEY`, falls gesetzt) — voller Rescan aller konfigurierten Verzeichnisse.
+- **Laden:** Die Registry scannt Tool-Wurzeln **rekursiv** nach `*.py` (Domänen-Ordner unter `agent_tools/`, z. B. `github/`, `secrets/`, `calendar/`). Standard-Wurzel: `agent_tools` im Image, optional `AGENT_TOOLS_EXTRA_DIR`. Mit **`AGENT_TOOL_DIRS`** (Komma-Liste) steuerst du die Wurzeln selbst.
+- **Pro Datei:** `TOOLS` + `HANDLERS`, optional `TOOL_ID`, `__version__` — siehe [TOOLS.md](./TOOLS.md).
+- **Reload:** `POST /v1/admin/reload-tools` (mit `AGENT_API_KEY`, falls gesetzt) — voller Rescan aller konfigurierten Verzeichnisse.
 
 Details und **Checkliste** der Tools: [TOOLS.md](./TOOLS.md).
 
@@ -88,12 +88,12 @@ Details und **Checkliste** der Tools: [TOOLS.md](./TOOLS.md).
 | GET | `/health` | App + DB |
 | GET | `/v1/models` | Proxy zu Ollama |
 | POST | `/v1/chat/completions` | Chat + Tool-Loop |
-| GET | `/v1/tools` | Schemas + Plugin-Meta |
-| POST | `/v1/admin/reload-plugins` | Registry neu laden |
+| GET | `/v1/tools` | Schemas + Tool-Meta |
+| POST | `/v1/admin/reload-tools` | Registry neu laden |
 | GET/POST/DELETE | `/v1/user/secrets` | Pro-User-Geheimnisse (verschlüsselt), siehe [TOOLS.md](./TOOLS.md#user-secrets) |
 | POST | `/v1/user/secrets/register-with-otp` | Secret speichern mit Einmalkennwort aus Tool `register_secrets` (ohne Bearer) |
 
 ## Siehe auch
 
 - `docker/compose.yaml` — Postgres, Ports, Kommentare zu Env-Vars.
-- `docker/extra_plugins/sample_echo.py` — Minimal-Extra-Plugin.
+- `docker/extra_tools/sample_echo.py` — Minimal-Extra-Tool.
