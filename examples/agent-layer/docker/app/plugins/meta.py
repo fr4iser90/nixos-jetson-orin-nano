@@ -12,7 +12,7 @@ from .. import db
 from .. import identity
 from ..registry import get_registry
 
-__version__ = "1.4.3"
+__version__ = "1.4.7"
 PLUGIN_ID = "meta"
 
 
@@ -129,36 +129,59 @@ def register_secrets(arguments: dict[str, Any]) -> str:
         f"--data-raw {shlex.quote(body_str)}"
     )
 
-    return json.dumps(
-        {
-            "ok": True,
-            "expires_in_seconds": ttl,
-            "service_key": raw_svc,
-            "resolved_user_id": uid,
-            "curl_bash": curl_bash,
-            "steps_de": (
-                [
-                    "Befehl `curl_bash` im Terminal einfügen und ausführen.",
-                    "Vorher im JSON-Feld `secret` die Platzhalter durch echte Werte ersetzen (Editor lokal — nie in den Chat).",
-                    "Für service_key `gmail`: `secret` muss JSON sein: "
-                    '`{"email":"…","app_password":"…"}` (Google App-Passwort, 2FA voraus).',
-                ]
-                if raw_svc == "gmail"
-                else [
-                    "Befehl `curl_bash` im Terminal einfügen und ausführen.",
-                    "Vorher nur den `secret`-Wert im JSON durch den echten Token/Passwort-Text ersetzen (lokal — nie in den Chat).",
-                ]
-            ),
-            "security_de": (
-                "Das OTP steht im Chat und verknüpft den Upload mit deinem Account. Wer deinen Chat mitlesen kann, "
-                "könnte es missbrauchen — Befehl zeitnah ausführen; OTP ist einmalig und läuft ab."
-            ),
-            "operator_note_de": (
-                "AGENT_SECRETS_MASTER_KEY ist nur Server-Konfiguration (Fernet), kein Wert für Nutzer im Chat."
-            ),
-        },
-        ensure_ascii=False,
-    )
+    jq_hint: str | None = None
+    if raw_svc == "gmail":
+        jq_hint = (
+            "Eine Zeile: in --arg e und --arg p nur DEINE@gmail.com und DEIN_APP_PASSWORT ersetzen (OTP schon gesetzt).\n"
+            "curl -sS -X POST "
+            + shlex.quote(url)
+            + " -H 'Content-Type: application/json' "
+            + '-d "$(jq -nc --arg o '
+            + shlex.quote(otp)
+            + " --arg sk gmail --arg e 'DEINE@gmail.com' --arg p 'DEIN_APP_PASSWORT' "
+            + "'{otp:$o, service_key:$sk, secret: ({email:$e, app_password:$p} | tojson)}')\""
+        )
+
+    out: dict[str, Any] = {
+        "ok": True,
+        "for_assistant_must_say_de": (
+            "Wichtig für die Antwort an den Nutzer: Das Secret ist **noch nicht** gespeichert. "
+            "Erst nach erfolgreichem `curl`/`jq` im Terminal (HTTP-Antwort enthält stored:true) existiert es in Postgres. "
+            "Nicht formulieren wie „already registered“, „no further action“, „secret is stored“ — das wäre falsch."
+        ),
+        "expires_in_seconds": ttl,
+        "service_key": raw_svc,
+        "resolved_user_id": uid,
+        "curl_bash": curl_bash,
+        "steps_de": (
+            [
+                "Befehl `curl_bash` ist **eine Zeile** — nicht umbrechen; sonst bricht JSON.",
+                "Oder **eine** jq-Zeile: `jq_register_example_de` — dort `--arg e` = E-Mail, `--arg p` = App-Passwort, OTP schon drin.",
+                "Alternativ Platzhalter in `curl_bash` ersetzen (lokal — nie in den Chat).",
+            ]
+            if raw_svc == "gmail"
+            else [
+                "Befehl `curl_bash` im Terminal einfügen und ausführen (eine Zeile).",
+                "Vorher nur den `secret`-Wert im JSON durch den echten Token/Passwort-Text ersetzen (lokal — nie in den Chat).",
+            ]
+        ),
+        "security_de": (
+            "Das OTP steht im Chat und verknüpft den Upload mit deinem Account. Wer deinen Chat mitlesen kann, "
+            "könnte es missbrauchen — Befehl zeitnah ausführen; OTP ist einmalig und läuft ab."
+        ),
+        "operator_note_de": (
+            "AGENT_SECRETS_MASTER_KEY ist nur Server-Konfiguration (Fernet), kein Wert für Nutzer im Chat."
+        ),
+        "shell_gt_prompt_means_de": (
+            "Wenn die Shell nur `>` anzeigt: ein Anführungszeichen ist noch offen — mit Ctrl+C abbrechen. "
+            "Dann `curl_bash` als **eine** Zeile einfügen (aus dem Tool-JSON kopieren, nicht mehrzeilig umbrechen); "
+            "bei gmail alternativ `jq_register_example_de`. Typischer Fehler: `}'`'' oder fehlendes schließendes `'`."
+        ),
+    }
+    if jq_hint:
+        out["jq_register_example_de"] = jq_hint
+
+    return json.dumps(out, ensure_ascii=False)
 
 
 def secrets_help(arguments: dict[str, Any]) -> str:
@@ -309,10 +332,10 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "register_secrets",
             "description": (
-                "Register/store one user secret (Gmail app password, API token, OAuth secret, etc.) for CLI upload. "
-                "Returns curl_bash with a fresh one-time OTP in the JSON body; user copies that line and replaces only "
-                "DEIN_GMAIL_APP_PASSWORT locally — no Bearer token. Pass service_key_example e.g. gmail. "
-                "Do not invent alternate curl or put WebUI user id in Authorization. Never paste real secrets into chat."
+                "Register/store one user secret for CLI upload. Returns curl_bash (one line) and for gmail jq_register_example_de. "
+                "Always include for_assistant_must_say_de in your reasoning: secret is NOT stored until the user runs curl/jq and gets stored:true. "
+                "Do NOT pretty-print curl_bash to multiple lines. When repeating jq line, keep OTP quoted as in jq_register_example_de (shlex). "
+                "Never paste real secrets into chat."
             ),
             "parameters": {
                 "type": "object",

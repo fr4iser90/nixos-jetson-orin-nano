@@ -489,16 +489,34 @@ def user_secret_register_with_otp(otp_raw: str, service_key: str, plaintext: str
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT user_id FROM secret_upload_otps
-                WHERE otp_hash = %s AND used_at IS NULL AND expires_at > now()
+                SELECT user_id, used_at, expires_at
+                FROM secret_upload_otps
+                WHERE otp_hash = %s
                 FOR UPDATE
                 """,
                 (otp_hash,),
             )
             row = cur.fetchone()
             if not row:
-                raise ValueError("invalid or expired otp")
+                raise ValueError(
+                    "unknown otp — check copy/paste (no spaces/line breaks), or mint a new one with register_secrets"
+                )
             uid = int(row[0])
+            used_at = row[1]
+            expires_at = row[2]
+            if used_at is not None:
+                raise ValueError(
+                    "otp already used (single-use) — call register_secrets again for a new curl_bash"
+                )
+            now_utc = datetime.now(UTC)
+            if expires_at is not None:
+                exp = expires_at
+                if getattr(exp, "tzinfo", None) is None:
+                    exp = exp.replace(tzinfo=UTC)
+                if exp <= now_utc:
+                    raise ValueError(
+                        "otp expired — default validity 10 min; call register_secrets again"
+                    )
             cur.execute(
                 """
                 UPDATE secret_upload_otps SET used_at = now()

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import re
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from . import config, db
 from .http_identity import resolve_user_tenant
@@ -40,17 +42,46 @@ class UserSecretBody(BaseModel):
     service_key: str = Field(..., min_length=1, max_length=64)
     secret: str = Field(..., min_length=1, max_length=65536)
 
+    @field_validator("secret", mode="before")
+    @classmethod
+    def _coerce_secret_legacy(cls, v: Any) -> str:
+        if isinstance(v, dict):
+            return json.dumps(v, ensure_ascii=False)
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("secret is empty")
+            return s
+        raise ValueError("secret must be a string or a JSON object")
+
 
 class RegisterWithOtpBody(BaseModel):
     otp: str = Field(..., min_length=8, max_length=256)
     service_key: str = Field(..., min_length=1, max_length=64)
     secret: str = Field(..., min_length=1, max_length=65536)
 
+    @field_validator("secret", mode="before")
+    @classmethod
+    def _coerce_secret(cls, v: Any) -> str:
+        """Allow JSON object in request body (curl-friendly); store as string like legacy POST."""
+        if isinstance(v, dict):
+            return json.dumps(v, ensure_ascii=False)
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                raise ValueError("secret is empty")
+            return s
+        raise ValueError(
+            "secret must be a string or a JSON object, e.g. "
+            '{"email":"you@gmail.com","app_password":"xxxx"} for gmail'
+        )
+
 
 @router.post("/register-with-otp")
 def register_secret_with_otp(body: RegisterWithOtpBody):
     """
     Store a secret using a one-time code from the ``register_secrets`` tool (chat).
+    Body ``secret`` may be a **string** (JSON text) or a **JSON object** (e.g. gmail credentials).
     No Bearer token or user headers — the OTP binds to the chat user who minted it.
     """
     _require_user_secrets_enabled()

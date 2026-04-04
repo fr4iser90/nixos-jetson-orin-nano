@@ -51,7 +51,7 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
 - **`AGENT_SECRETS_MASTER_KEY`** (nur **Betreiber**, nie Endnutzer): Fernet-Key erzeugen mit  
   `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`  
   — in **`docker/.env`**, nicht committen. Verschlüsselt nur die Datenbank-Inhalte; Nutzer sehen oder tippen das **nicht**. Bei Key-Verlust sind gespeicherte Secrets **nicht** wiederherstellbar.
-- **Registrieren (empfohlen):** Tool **`register_secrets`** — legt ein **Einmalkennwort** für den **aktuellen Chat-User** an und liefert **`curl_bash`**: darin ist das OTP schon im JSON; der Nutzer ersetzt nur den Platzhalter **`DEIN_GMAIL_APP_PASSWORT`** lokal und führt den Befehl aus. Endpoint: **`POST /v1/user/secrets/register-with-otp`** (ohne Bearer — wenn `AGENT_API_KEY` gesetzt ist, ist dieser Pfad davon ausgenommen).
+- **Registrieren (empfohlen):** Tool **`register_secrets`** — legt ein **Einmalkennwort** für den **aktuellen Chat-User** an und liefert **`curl_bash`**: darin ist das OTP schon im JSON; der Nutzer ersetzt nur den Platzhalter **`DEIN_GMAIL_APP_PASSWORT`** lokal und führt den Befehl aus. Endpoint: **`POST /v1/user/secrets/register-with-otp`** (ohne Bearer — wenn `AGENT_API_KEY` gesetzt ist, ist dieser Pfad davon ausgenommen). Feld **`secret`** darf **String** (JSON-Text) oder **Objekt** sein — z. B. `{"email":"…","app_password":"…"}` direkt im Body (kein Escaping nötig).
 - **OTP-Sicherheit:** Wer den Chat mitlesen kann, könnte das OTP nutzen — kurz gültig (Standard 10 min), **einmalig**; Befehl zeitnah ausführen.
 - **Legacy** (Header + optional Bearer): `POST /v1/user/secrets` mit denselben User-Headern wie beim Chat; wenn **`AGENT_API_KEY`** gesetzt ist, **`Authorization: Bearer …`** = **nur** dieser Agent-Key (Open-WebUI-Connection), **niemals** die WebUI-User-ID. **`GET`** / **`DELETE`** für Auflisten bzw. Entfernen von `service_key`s ebenfalls mit diesen Headern (und Bearer falls konfiguriert).
 - **Plugins** (z. B. E-Mail): serverseitig nur `db.user_secret_get_plaintext(user_id, "…")`; **nie** Klartext in Tool-Antworten an das Modell.
@@ -64,7 +64,7 @@ Implementierung: jeweils Plugin-Modul mit `TOOLS` (OpenAI-Schema) + `HANDLERS` (
   {"email":"du@gmail.com","app_password":"xxxxxxxxxxxxxxxx"}
   ```
   Leerzeichen im App-Passwort sind erlaubt (werden beim Einlesen entfernt). Google: **2-Faktor** + **App-Passwort**; normales Login-Passwort funktioniert am IMAP-Endpoint nicht.
-- **Registrieren:** `register_secrets` mit `service_key_example: "gmail"` — im `curl` steht im Feld `secret` bereits ein JSON-Platzhalter; **E-Mail und App-Passwort lokal eintragen**, Befehl im Terminal ausführen.
+- **Registrieren:** `register_secrets` mit `service_key_example: "gmail"` — **`curl_bash` eine Zeile**; oder **`jq_register_example_de`**: **eine** Zeile, `--arg e` / `--arg p` für E-Mail und App-Passwort, OTP bereits eingetragen (`tojson` baut das `secret`-Feld).
 - **Zugriff:** IMAP **`imap.gmail.com:993`**, Standard-Mailbox **`INBOX`** (Parameter `mailbox` bei Bedarf).
 - **Tools:** **`gmail_search`** (Gmail-Suchsyntax wie in der Web-UI), **`gmail_read`** (`uid` aus der Suche), **`gmail_collect_for_summary`** (mehrere Mails → Auszüge; das **Modell** soll daraus eine Zusammenfassung formulieren). **Keine** Mail-Inhalte absichtlich vollständig spammen: `limit` / `max_body_chars` / `max_messages` beachten.
 
