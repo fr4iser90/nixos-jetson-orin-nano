@@ -8,7 +8,6 @@ services:
     restart: unless-stopped
     volumes:
       - librechat_mongo:/data/db
-
   meilisearch:
     image: getmeili/meilisearch:v1.11
     container_name: librechat-meili
@@ -18,7 +17,6 @@ services:
       - MEILI_NO_ANALYTICS=true
     volumes:
       - librechat_meili:/meili_data
-
   librechat:
     image: ghcr.io/danny-avila/librechat:latest
     container_name: librechat
@@ -42,7 +40,6 @@ services:
     volumes:
       - librechat_uploads:/app/client/public/images
       - librechat_logs:/app/api/logs
-
 volumes:
   librechat_mongo:
   librechat_meili:

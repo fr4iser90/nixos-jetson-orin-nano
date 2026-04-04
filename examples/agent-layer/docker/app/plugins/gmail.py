@@ -53,7 +53,11 @@ def _parse_gmail_secret(raw: str | None) -> dict[str, str] | None:
     if not isinstance(obj, dict):
         return None
     email = str(obj.get("email") or "").strip()
-    pw = str(obj.get("app_password") or obj.get("password") or "").strip().replace(" ", "")
+    pw = (
+        str(obj.get("app_password") or obj.get("password") or "")
+        .strip()
+        .replace(" ", "")
+    )
     if not email or not pw:
         return None
     return {"email": email, "app_password": pw}
@@ -100,7 +104,9 @@ def _select(mail: imaplib.IMAP4_SSL, mailbox: str) -> str | None:
     return None
 
 
-def _uids_from_search(mail: imaplib.IMAP4_SSL, gmail_query: str, limit: int) -> list[bytes]:
+def _uids_from_search(
+    mail: imaplib.IMAP4_SSL, gmail_query: str, limit: int
+) -> list[bytes]:
     q = _sanitize_raw_query(gmail_query)
     limit = max(1, min(int(limit or 20), 50))
     typ, data = mail.uid("SEARCH", None, "X-GM-RAW", f'"{q}"')
@@ -147,7 +153,9 @@ def gmail_search(arguments: dict[str, Any]) -> str:
 
     q = (arguments.get("gmail_query") or arguments.get("query") or "").strip()
     if not q:
-        return json.dumps({"ok": False, "error": "gmail_query is required"}, ensure_ascii=False)
+        return json.dumps(
+            {"ok": False, "error": "gmail_query is required"}, ensure_ascii=False
+        )
     mailbox = (arguments.get("mailbox") or "INBOX").strip() or "INBOX"
     try:
         limit = int(arguments.get("limit") or 20)
@@ -157,7 +165,9 @@ def gmail_search(arguments: dict[str, Any]) -> str:
     try:
         mail = _connect(creds)
     except imaplib.IMAP4.error as e:
-        return json.dumps({"ok": False, "error": f"IMAP login failed: {e!s}"}, ensure_ascii=False)
+        return json.dumps(
+            {"ok": False, "error": f"IMAP login failed: {e!s}"}, ensure_ascii=False
+        )
 
     try:
         err = _select(mail, mailbox)
@@ -166,8 +176,14 @@ def gmail_search(arguments: dict[str, Any]) -> str:
         uids = _uids_from_search(mail, q, limit)
         rows: list[dict[str, Any]] = []
         for uidb in uids:
-            uid_s = uidb.decode("ascii", errors="replace") if isinstance(uidb, bytes) else str(uidb)
-            typ, data = mail.uid("FETCH", uid_s, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] UID)")
+            uid_s = (
+                uidb.decode("ascii", errors="replace")
+                if isinstance(uidb, bytes)
+                else str(uidb)
+            )
+            typ, data = mail.uid(
+                "FETCH", uid_s, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] UID)"
+            )
             if typ != "OK" or not data or not isinstance(data[0], tuple):
                 continue
             raw = data[0][1]
@@ -215,7 +231,9 @@ def gmail_read(arguments: dict[str, Any]) -> str:
     try:
         uid = int(arguments.get("uid"))
     except (TypeError, ValueError):
-        return json.dumps({"ok": False, "error": "uid is required (integer)"}, ensure_ascii=False)
+        return json.dumps(
+            {"ok": False, "error": "uid is required (integer)"}, ensure_ascii=False
+        )
 
     mailbox = (arguments.get("mailbox") or "INBOX").strip() or "INBOX"
     try:
@@ -227,7 +245,9 @@ def gmail_read(arguments: dict[str, Any]) -> str:
     try:
         mail = _connect(creds)
     except imaplib.IMAP4.error as e:
-        return json.dumps({"ok": False, "error": f"IMAP login failed: {e!s}"}, ensure_ascii=False)
+        return json.dumps(
+            {"ok": False, "error": f"IMAP login failed: {e!s}"}, ensure_ascii=False
+        )
 
     try:
         err = _select(mail, mailbox)
@@ -235,7 +255,9 @@ def gmail_read(arguments: dict[str, Any]) -> str:
             return json.dumps({"ok": False, "error": err}, ensure_ascii=False)
         typ, data = mail.uid("FETCH", str(uid), "(RFC822)")
         if typ != "OK" or not data or not isinstance(data[0], tuple):
-            return json.dumps({"ok": False, "error": f"no message uid={uid}"}, ensure_ascii=False)
+            return json.dumps(
+                {"ok": False, "error": f"no message uid={uid}"}, ensure_ascii=False
+            )
         raw = data[0][1]
         if not isinstance(raw, (bytes, bytearray)):
             return json.dumps({"ok": False, "error": "empty body"}, ensure_ascii=False)
@@ -270,7 +292,9 @@ def gmail_collect_for_summary(arguments: dict[str, Any]) -> str:
 
     q = (arguments.get("gmail_query") or arguments.get("query") or "").strip()
     if not q:
-        return json.dumps({"ok": False, "error": "gmail_query is required"}, ensure_ascii=False)
+        return json.dumps(
+            {"ok": False, "error": "gmail_query is required"}, ensure_ascii=False
+        )
     mailbox = (arguments.get("mailbox") or "INBOX").strip() or "INBOX"
     try:
         max_msg = int(arguments.get("max_messages") or 8)
@@ -286,7 +310,9 @@ def gmail_collect_for_summary(arguments: dict[str, Any]) -> str:
     try:
         mail = _connect(creds)
     except imaplib.IMAP4.error as e:
-        return json.dumps({"ok": False, "error": f"IMAP login failed: {e!s}"}, ensure_ascii=False)
+        return json.dumps(
+            {"ok": False, "error": f"IMAP login failed: {e!s}"}, ensure_ascii=False
+        )
 
     blocks: list[str] = []
     try:
@@ -296,11 +322,20 @@ def gmail_collect_for_summary(arguments: dict[str, Any]) -> str:
         uids = _uids_from_search(mail, q, max_msg)
         if not uids:
             return json.dumps(
-                {"ok": True, "count": 0, "combined_excerpt": "", "hint": "No messages matched."},
+                {
+                    "ok": True,
+                    "count": 0,
+                    "combined_excerpt": "",
+                    "hint": "No messages matched.",
+                },
                 ensure_ascii=False,
             )
         for uidb in uids:
-            uid_s = uidb.decode("ascii", errors="replace") if isinstance(uidb, bytes) else str(uidb)
+            uid_s = (
+                uidb.decode("ascii", errors="replace")
+                if isinstance(uidb, bytes)
+                else str(uidb)
+            )
             typ, data = mail.uid("FETCH", uid_s, "(RFC822)")
             if typ != "OK" or not data or not isinstance(data[0], tuple):
                 continue
@@ -387,7 +422,10 @@ TOOLS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "uid": {"type": "integer", "description": "IMAP UID from gmail_search"},
+                    "uid": {
+                        "type": "integer",
+                        "description": "IMAP UID from gmail_search",
+                    },
                     "mailbox": {"type": "string", "description": "Default INBOX"},
                     "max_body_chars": {
                         "type": "integer",

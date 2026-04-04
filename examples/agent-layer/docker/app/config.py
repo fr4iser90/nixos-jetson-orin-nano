@@ -18,6 +18,7 @@ SYSTEM_PROMPT_EXTRA = os.environ.get("AGENT_SYSTEM_PROMPT", "").strip()
 # If Ollama returns no tool_calls but JSON tool intent in message content (e.g. Nemotron), parse and run.
 CONTENT_TOOL_FALLBACK = _env_bool("AGENT_CONTENT_TOOL_FALLBACK", True)
 
+
 def _resolve_database_url() -> str:
     """
     Prefer explicit DATABASE_URL. If unset/empty, build from POSTGRES_* / PGHOST (same as compose postgres service),
@@ -48,6 +49,7 @@ DATABASE_URL = _resolve_database_url()
 # Optional directory of extra *.py plugins (same TOOLS/HANDLERS contract as app.plugins).
 PLUGINS_EXTRA_DIR = os.environ.get("AGENT_PLUGINS_EXTRA_DIR", "").strip()
 
+
 # Comma-separated SHA256 hex digests (64 chars). If set, each extra *.py must match one entry.
 # Read on each extra-plugin scan (reload) so container env updates take effect without code change.
 # Multi-tenant HTTP: stable user id per request (comma-separated header names; first non-empty wins).
@@ -61,8 +63,12 @@ def _user_sub_headers() -> list[str]:
 
 
 USER_SUB_HEADERS = _user_sub_headers()
-TENANT_ID_HEADER = (os.environ.get("AGENT_TENANT_ID_HEADER") or "X-Agent-Tenant-Id").strip()
-DEFAULT_EXTERNAL_SUB = (os.environ.get("AGENT_DEFAULT_EXTERNAL_SUB") or "default").strip() or "default"
+TENANT_ID_HEADER = (
+    os.environ.get("AGENT_TENANT_ID_HEADER") or "X-Agent-Tenant-Id"
+).strip()
+DEFAULT_EXTERNAL_SUB = (
+    os.environ.get("AGENT_DEFAULT_EXTERNAL_SUB") or "default"
+).strip() or "default"
 
 # Fernet URL-safe base64 key for encrypting user_secrets at rest (generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
 SECRETS_MASTER_KEY = (os.environ.get("AGENT_SECRETS_MASTER_KEY") or "").strip()

@@ -28,7 +28,6 @@ services:
       timeout: 5s
       retries: 15
       start_period: 10s
-
   agent-layer:
     build:
       context: .
@@ -80,10 +79,8 @@ services:
     #   - ./extra_plugins:/data/plugins:ro
     networks:
       - ai-net
-
 volumes:
   agent_pg_data:
-
 networks:
   ai-net:
     external: true

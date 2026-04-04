@@ -234,7 +234,11 @@ async def chat_completion(body: dict[str, Any]) -> dict[str, Any]:
     if tools:
         names = [n for t in tools if (n := _tool_spec_name(t))]
         logger.info("forwarding %d tools to Ollama: %s", len(names), names)
-    options = {k: v for k, v in body.items() if k not in ("messages", "model", "tools", "stream")}
+    options = {
+        k: v
+        for k, v in body.items()
+        if k not in ("messages", "model", "tools", "stream")
+    }
 
     url = f"{config.OLLAMA_BASE_URL}/v1/chat/completions"
     headers = {"Content-Type": "application/json"}

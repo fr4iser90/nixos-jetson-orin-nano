@@ -506,7 +506,9 @@ def secret_upload_otp_create(user_id: int, ttl_seconds: int = 600) -> str:
     return raw
 
 
-def user_secret_register_with_otp(otp_raw: str, service_key: str, plaintext: str) -> None:
+def user_secret_register_with_otp(
+    otp_raw: str, service_key: str, plaintext: str
+) -> None:
     """Validate OTP (single-use), then upsert encrypted secret for bound user."""
     from . import crypto_secrets
 
@@ -632,7 +634,9 @@ def kb_note_search(query: str, limit: int = 20) -> list[dict[str, Any]]:
                     (tenant_id, user_id, pat, pat, q, limit),
                 )
             except psycopg.Error:
-                logger.debug("kb_note_search fts fallback for query %r", q[:80], exc_info=True)
+                logger.debug(
+                    "kb_note_search fts fallback for query %r", q[:80], exc_info=True
+                )
                 conn.rollback()
                 cur.execute(
                     sql_ilike,
@@ -647,7 +651,9 @@ def kb_note_search(query: str, limit: int = 20) -> list[dict[str, Any]]:
                 "id": r["id"],
                 "title": r["title"],
                 "body_excerpt": r["body_excerpt"],
-                "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+                "created_at": (
+                    r["created_at"].isoformat() if r.get("created_at") else None
+                ),
             }
         )
     return out

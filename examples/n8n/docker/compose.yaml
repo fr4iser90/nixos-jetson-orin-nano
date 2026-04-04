@@ -13,6 +13,5 @@ services:
       - N8N_PORT=5678
       - GENERIC_TIMEZONE=UTC
       # Set a secret for production: N8N_ENCRYPTION_KEY=<openssl rand -hex 32>
-
 volumes:
   n8n_data:

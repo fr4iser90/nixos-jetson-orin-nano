@@ -17,11 +17,8 @@ services:
     # GPU (Jetson / jetpack-nixos CDI):
     # devices:
     #   - nvidia.com/gpu=all
-
-
 volumes:
   ollama_data:
-
 networks:
   ai-net:
     external: true

@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import json
-import re
-import shlex
 from typing import Any, Callable
 
 from .. import config
 from .. import db
 from .. import identity
+from .. import secret_otp_bundle
 from ..registry import get_registry
 
-__version__ = "1.5.0"
+__version__ = "1.5.2"
 PLUGIN_ID = "meta"
 
 
@@ -81,9 +80,6 @@ def get_tool_help(arguments: dict[str, Any]) -> str:
     )
 
 
-_SERVICE_KEY_SAFE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")
-
-
 def register_secrets(arguments: dict[str, Any]) -> str:
     """
     Mint a one-time code bound to the current chat user; return a bash-safe curl that only needs
@@ -101,156 +97,25 @@ def register_secrets(arguments: dict[str, Any]) -> str:
             },
             ensure_ascii=False,
         )
-    raw_svc = (arguments.get("service_key_example") or "email_imap").strip().lower()
-    if not _SERVICE_KEY_SAFE.fullmatch(raw_svc):
-        raw_svc = "email_imap"
-    ttl = 600
-    raw_ttl = arguments.get("ttl_seconds")
-    if isinstance(raw_ttl, (int, float)):
-        t = int(raw_ttl)
-        if 120 <= t <= 3600:
-            ttl = t
-
-    _tid, uid = identity.get_identity()
-    otp = db.secret_upload_otp_create(uid, ttl_seconds=ttl)
-    base = config.PUBLIC_BASE_URL or f"http://127.0.0.1:{config.HTTP_EXAMPLE_PORT}"
-    if raw_svc == "gmail":
-        secret_blob = '{"email":"du@gmail.com","app_password":"DEIN_APP_PASSWORT"}'
-    elif raw_svc == "github_pat":
-        secret_blob = '{"token":"DEIN_GITHUB_PAT_ODER_github_pat_xxx"}'
-    elif raw_svc == "calendar_ics":
-        secret_blob = '{"ics_url":"https://DEINE_CLOUD/.../calendar.ics"}'
-    elif raw_svc == "google_calendar":
-        secret_blob = (
-            '{"ics_url":"https://calendar.google.com/calendar/ical/DEINE_MAIL%40gmail.com/'
-            'private-XXXX/basic.ics"}'
-        )
-    else:
-        secret_blob = "DEIN_SECRET_TEXT"
-    body_str = json.dumps(
-        {"otp": otp, "service_key": raw_svc, "secret": secret_blob},
-        ensure_ascii=False,
+    raw_svc = secret_otp_bundle.normalize_service_key(
+        arguments.get("service_key_example")
     )
-    url = f"{base}/v1/user/secrets/register-with-otp"
-    curl_bash = (
-        f"curl -sS -X POST {shlex.quote(url)} "
-        f"-H {shlex.quote('Content-Type: application/json')} "
-        f"--data-raw {shlex.quote(body_str)}"
-    )
-
-    jq_hint: str | None = None
-    if raw_svc == "gmail":
-        jq_hint = (
-            "Eine Zeile: in --arg e und --arg p nur DEINE@gmail.com und DEIN_APP_PASSWORT ersetzen (OTP schon gesetzt).\n"
-            "curl -sS -X POST "
-            + shlex.quote(url)
-            + " -H 'Content-Type: application/json' "
-            + '-d "$(jq -nc --arg o '
-            + shlex.quote(otp)
-            + " --arg sk gmail --arg e 'DEINE@gmail.com' --arg p 'DEIN_APP_PASSWORT' "
-            + "'{otp:$o, service_key:$sk, secret: ({email:$e, app_password:$p} | tojson)}')\""
-        )
-    elif raw_svc == "github_pat":
-        jq_hint = (
-            "Eine Zeile: --arg t = Fine-grained PAT oder klassisch ghp_… (OTP schon in --arg o).\n"
-            "curl -sS -X POST "
-            + shlex.quote(url)
-            + " -H 'Content-Type: application/json' "
-            + '-d "$(jq -nc --arg o '
-            + shlex.quote(otp)
-            + " --arg sk github_pat --arg t 'DEIN_GITHUB_PAT' "
-            + "'{otp:$o, service_key:$sk, secret: ({token:$t} | tojson)}')\""
-        )
-    elif raw_svc == "calendar_ics":
-        jq_hint = (
-            "Eine Zeile: --arg u = HTTPS-ICS-URL (Nextcloud Export-Link o. ä.; OTP in --arg o).\n"
-            "curl -sS -X POST "
-            + shlex.quote(url)
-            + " -H 'Content-Type: application/json' "
-            + '-d "$(jq -nc --arg o '
-            + shlex.quote(otp)
-            + " --arg sk calendar_ics --arg u 'https://DEINE_CLOUD/.../export' "
-            + "'{otp:$o, service_key:$sk, secret: ({ics_url:$u} | tojson)}')\""
-        )
-    elif raw_svc == "google_calendar":
-        jq_hint = (
-            "Google: In calendar.google.com → Einstellungen → Kalender → „Geheime Adresse im iCal-Format“ kopieren; "
-            "in --arg u **eine Zeile** einfügen (OTP in --arg o).\n"
-            "curl -sS -X POST "
-            + shlex.quote(url)
-            + " -H 'Content-Type: application/json' "
-            + '-d "$(jq -nc --arg o '
-            + shlex.quote(otp)
-            + " --arg sk google_calendar --arg u 'https://calendar.google.com/calendar/ical/.../basic.ics' "
-            + "'{otp:$o, service_key:$sk, secret: ({ics_url:$u} | tojson)}')\""
-        )
-
-    out: dict[str, Any] = {
-        "ok": True,
-        "for_assistant_must_say_de": (
-            "Wichtig für die Antwort an den Nutzer: Das Secret ist **noch nicht** gespeichert. "
-            "Erst nach erfolgreichem `curl`/`jq` im Terminal (HTTP-Antwort enthält stored:true) existiert es in Postgres. "
-            "Nicht formulieren wie „already registered“, „no further action“, „secret is stored“ — das wäre falsch."
-        ),
-        "expires_in_seconds": ttl,
-        "service_key": raw_svc,
-        "resolved_user_id": uid,
-        "curl_bash": curl_bash,
-        "steps_de": (
-            [
-                "Befehl `curl_bash` ist **eine Zeile** — nicht umbrechen; sonst bricht JSON.",
-                "Oder **eine** jq-Zeile: `jq_register_example_de` — dort `--arg e` = E-Mail, `--arg p` = App-Passwort, OTP schon drin.",
-                "Alternativ Platzhalter in `curl_bash` ersetzen (lokal — nie in den Chat).",
-            ]
-            if raw_svc == "gmail"
-            else [
-                "Befehl `curl_bash` ist **eine Zeile**; oder `jq_register_example_de` mit `--arg t` = GitHub PAT.",
-                "Nur lokal ausführen; Token nie in den Chat.",
-            ]
-            if raw_svc == "github_pat"
-            else [
-                "Befehl `curl_bash` eine Zeile; oder `jq_register_example_de` mit `--arg u` = HTTPS-ICS-URL.",
-                "ICS-URL von Nextcloud/Google „Secret address in iCal format“ o. ä.; kein localhost.",
-            ]
-            if raw_svc == "calendar_ics"
-            else [
-                "Google Kalender: „Geheime Adresse im iCal-Format“ aus den Kalendereinstellungen kopieren.",
-                "Befehl `curl_bash` eine Zeile; oder `jq_register_example_de` mit `--arg u` = diese https-URL (nie in den Chat posten).",
-            ]
-            if raw_svc == "google_calendar"
-            else [
-                "Befehl `curl_bash` im Terminal einfügen und ausführen (eine Zeile).",
-                "Vorher nur den `secret`-Wert im JSON durch den echten Token/Passwort-Text ersetzen (lokal — nie in den Chat).",
-            ]
-        ),
-        "security_de": (
-            "Das OTP steht im Chat und verknüpft den Upload mit deinem Account. Wer deinen Chat mitlesen kann, "
-            "könnte es missbrauchen — Befehl zeitnah ausführen; OTP ist einmalig und läuft ab."
-        ),
-        "operator_note_de": (
-            "AGENT_SECRETS_MASTER_KEY ist nur Server-Konfiguration (Fernet), kein Wert für Nutzer im Chat."
-        ),
-        "shell_gt_prompt_means_de": (
-            "Wenn die Shell nur `>` anzeigt: ein Anführungszeichen ist noch offen — mit Ctrl+C abbrechen. "
-            "Dann `curl_bash` als **eine** Zeile einfügen (aus dem Tool-JSON kopieren, nicht mehrzeilig umbrechen); "
-            "bei gmail alternativ `jq_register_example_de`. Typischer Fehler: `}'`'' oder fehlendes schließendes `'`."
-        ),
-    }
-    if jq_hint:
-        out["jq_register_example_de"] = jq_hint
-
-    return json.dumps(out, ensure_ascii=False)
+    ttl = secret_otp_bundle.ttl_clamp(arguments.get("ttl_seconds"))
+    payload = secret_otp_bundle.build_otp_curl_payload(raw_svc, ttl)
+    return json.dumps({"ok": True, **payload}, ensure_ascii=False)
 
 
 def secrets_help(arguments: dict[str, Any]) -> str:
     """Static help for user secrets: OTP only via register_secrets; no OTP is minted here."""
-    raw_svc = (arguments.get("service_key_example") or "email_imap").strip().lower()
-    if not _SERVICE_KEY_SAFE.fullmatch(raw_svc):
-        raw_svc = "email_imap"
+    raw_svc = secret_otp_bundle.normalize_service_key(
+        arguments.get("service_key_example")
+    )
     topic = (arguments.get("topic") or "").strip().lower()
 
     base = config.PUBLIC_BASE_URL or f"http://127.0.0.1:{config.HTTP_EXAMPLE_PORT}"
-    user_hdr = config.USER_SUB_HEADERS[0] if config.USER_SUB_HEADERS else "X-OpenWebUI-User-Id"
+    user_hdr = (
+        config.USER_SUB_HEADERS[0] if config.USER_SUB_HEADERS else "X-OpenWebUI-User-Id"
+    )
 
     _tid, uid = identity.get_identity()
     resolved_sub = db.user_external_sub(uid)
@@ -262,19 +127,21 @@ def secrets_help(arguments: dict[str, Any]) -> str:
         "Gespeicherte `service_key`-Namen auflisten oder einen Key löschen: HTTP `GET`/`DELETE` `/v1/user/secrets` mit denselben User-Headern wie der Chat (optional Bearer `AGENT_API_KEY`) — siehe TOOLS.md.",
     ]
     if topic in ("email", "imap", "mail", "gmail"):
-        hints.append("Gmail: Google-Konto → App-Passwort; `service_key` z. B. `gmail` oder `email_imap`.")
+        hints.append(
+            "Gmail: Google-Konto → App-Passwort; `service_key` z. B. `gmail` oder `email_imap`."
+        )
     if topic in ("github", "gh", "pat"):
         hints.append(
-            "GitHub: `service_key` `github_pat` — JSON `{\"token\":\"…\"}` oder Operator setzt `GITHUB_TOKEN` in docker/.env für alle Nutzer."
+            'GitHub: `service_key` `github_pat` — JSON `{"token":"…"}` oder Operator setzt `GITHUB_TOKEN` in docker/.env für alle Nutzer.'
         )
     if topic in ("calendar", "ics", "caldav", "nextcloud"):
         hints.append(
-            "Kalender read-only: `calendar_ics` oder `google_calendar` mit JSON `{\"ics_url\":\"https://…\"}` — "
+            'Kalender read-only: `calendar_ics` oder `google_calendar` mit JSON `{"ics_url":"https://…"}` — '
             "Google: Einstellungen → geheime iCal-Adresse (`calendar.google.com/.../basic.ics`)."
         )
     if topic in ("google", "gcal", "google_calendar"):
         hints.append(
-            "Google Kalender: `register_secrets` mit `service_key_example: \"google_calendar\"`; Secret = iCal-URL aus den Google-Kalendereinstellungen."
+            'Google Kalender: `register_secrets` mit `service_key_example: "google_calendar"`; Secret = iCal-URL aus den Google-Kalendereinstellungen.'
         )
 
     return json.dumps(
@@ -291,7 +158,9 @@ def secrets_help(arguments: dict[str, Any]) -> str:
             ),
             "gmail_save_use_this_tool": "register_secrets",
             "gmail_save_example_args": {"service_key_example": "gmail"},
-            "google_calendar_save_example_args": {"service_key_example": "google_calendar"},
+            "google_calendar_save_example_args": {
+                "service_key_example": "google_calendar"
+            },
             "service_key_example": raw_svc,
             "base_url_used": base,
             "user_header": user_hdr,
@@ -371,10 +240,12 @@ TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "register_secrets",
             "description": (
-                "Register/store one user secret for CLI upload. Returns curl_bash (one line) and for gmail jq_register_example_de. "
-                "Always include for_assistant_must_say_de in your reasoning: secret is NOT stored until the user runs curl/jq and gets stored:true. "
-                "Do NOT pretty-print curl_bash to multiple lines. When repeating jq line, keep OTP quoted as in jq_register_example_de (shlex). "
-                "Never paste real secrets into chat."
+                "ONLY way to get a valid OTP and curl for saving a user secret. You MUST invoke this tool — "
+                "NEVER invent or type a curl command yourself (wrong OTP, wrong JSON, broken quotes). "
+                "Copy to the user ONLY the exact curl_bash string from YOUR tool response JSON (and jq_register_example_de if present). "
+                "Match service_key_example to what the user asked for: Google Calendar iCal URL → google_calendar; Gmail → gmail; GitHub PAT → github_pat; generic ICS → calendar_ics. "
+                "Always include for_assistant_must_say_de: secret is NOT stored until the user runs that curl/jq and gets stored:true. "
+                "Do NOT pretty-print curl_bash. Never paste real secrets or iCal URLs into chat."
             ),
             "parameters": {
                 "type": "object",
@@ -382,8 +253,8 @@ TOOLS: list[dict[str, Any]] = [
                     "service_key_example": {
                         "type": "string",
                         "description": (
-                            "Logical name for this secret (lowercase [a-z0-9._-]), "
-                            "e.g. gmail, github_pat, calendar_ics, google_calendar, email_imap"
+                            "Must match the integration: google_calendar (Google secret iCal link), calendar_ics (other HTTPS ICS), "
+                            "gmail (IMAP app password JSON), github_pat (token JSON). Lowercase [a-z0-9._-]."
                         ),
                     },
                     "ttl_seconds": {

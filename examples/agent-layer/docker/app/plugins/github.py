@@ -76,7 +76,7 @@ def _request(
                 "ok": False,
                 "error": (
                     "No GitHub token: set GITHUB_TOKEN in the agent environment (e.g. docker/.env) "
-                    f'or register a user secret `{USER_SECRET_KEY}` via register_secrets '
+                    f"or register a user secret `{USER_SECRET_KEY}` via register_secrets "
                     '(JSON {"token":"ghp_…"} or github_pat_… string).'
                 ),
             },
@@ -206,7 +206,11 @@ def github_get_file(arguments: dict[str, Any]) -> str:
     b64 = data.get("encoding") == "base64" and data.get("content")
     if not b64:
         return json.dumps(
-            {"ok": False, "error": "no file content (too large or empty)", "sha": data.get("sha")},
+            {
+                "ok": False,
+                "error": "no file content (too large or empty)",
+                "sha": data.get("sha"),
+            },
         )
     try:
         raw = base64.b64decode(
@@ -262,7 +266,9 @@ def github_list_pull_requests(arguments: dict[str, Any]) -> str:
                 }
             )
     if not isinstance(data, list):
-        return json.dumps({"ok": False, "error": "unexpected response"}, ensure_ascii=False)
+        return json.dumps(
+            {"ok": False, "error": "unexpected response"}, ensure_ascii=False
+        )
     return json.dumps({"ok": True, "items": items_out}, ensure_ascii=False)
 
 
@@ -291,7 +297,9 @@ def github_get_issue(arguments: dict[str, Any]) -> str:
             "state": data.get("state"),
             "html_url": data.get("html_url"),
             "user": (data.get("user") or {}).get("login"),
-            "labels": [x.get("name") for x in (data.get("labels") or []) if isinstance(x, dict)],
+            "labels": [
+                x.get("name") for x in (data.get("labels") or []) if isinstance(x, dict)
+            ],
             "pull_request": bool(data.get("pull_request")),
             "body": body,
         },
@@ -366,7 +374,10 @@ TOOLS: list[dict[str, Any]] = [
                 "properties": {
                     "owner": {"type": "string"},
                     "repo": {"type": "string"},
-                    "path": {"type": "string", "description": "File path in repo, e.g. README.md"},
+                    "path": {
+                        "type": "string",
+                        "description": "File path in repo, e.g. README.md",
+                    },
                     "ref": {
                         "type": "string",
                         "description": "Optional branch, tag, or commit SHA",

@@ -59,7 +59,10 @@ async def optional_api_key(request: Request, call_next):
     if request.url.path in ("/health", "/v1/models"):
         return await call_next(request)
     # OTP minted in chat binds to user_id; no shared Bearer for end users (see register_secrets tool).
-    if request.method == "POST" and request.url.path == "/v1/user/secrets/register-with-otp":
+    if (
+        request.method == "POST"
+        and request.url.path == "/v1/user/secrets/register-with-otp"
+    ):
         return await call_next(request)
     auth = request.headers.get("authorization") or ""
     token = auth.removeprefix("Bearer ").strip()
@@ -223,7 +226,9 @@ async def admin_reload_plugins(
     If ``AGENT_API_KEY`` is set, send ``Authorization: Bearer <key>``.
     """
     if not config.OPTIONAL_API_KEY:
-        logger.warning("reload-plugins called with AGENT_API_KEY unset — consider setting it if exposed")
+        logger.warning(
+            "reload-plugins called with AGENT_API_KEY unset — consider setting it if exposed"
+        )
     try:
         reg = reload_registry(scope=scope)
     except ValueError as e:

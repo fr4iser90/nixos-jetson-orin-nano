@@ -167,7 +167,9 @@ class ToolRegistry:
         if mod_tools is None and mod_handlers is None:
             return
         if not isinstance(mod_tools, list) or not isinstance(mod_handlers, dict):
-            logger.error("invalid plugin exports (need TOOLS list and HANDLERS dict): %s", source)
+            logger.error(
+                "invalid plugin exports (need TOOLS list and HANDLERS dict): %s", source
+            )
             return
 
         pid = getattr(mod, "PLUGIN_ID", None) or getattr(mod, "__name__", "unknown")
@@ -221,7 +223,9 @@ class ToolRegistry:
         if file_sha256 is not None:
             entry["sha256"] = file_sha256
         meta.append(entry)
-        logger.info("loaded plugin %s v%s (%d tools) [%s]", pid, ver, len(tool_names), source)
+        logger.info(
+            "loaded plugin %s v%s (%d tools) [%s]", pid, ver, len(tool_names), source
+        )
 
     def _merge(self) -> None:
         overlap = set(self._builtin_handlers) & set(self._extra_handlers)
@@ -230,7 +234,9 @@ class ToolRegistry:
                 f"extra plugins define tool names that already exist as built-ins: {sorted(overlap)}"
             )
         self._handlers = {**self._builtin_handlers, **self._extra_handlers}
-        self._openai_tools = list(self._builtin_openai_tools) + list(self._extra_openai_tools)
+        self._openai_tools = list(self._builtin_openai_tools) + list(
+            self._extra_openai_tools
+        )
         self._plugins_meta = list(self._builtin_meta) + list(self._extra_meta)
 
     @property

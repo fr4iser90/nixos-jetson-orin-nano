@@ -12,6 +12,5 @@ services:
       - THREADS=4
       - CONTEXT_SIZE=4096
     # For GPU variants see https://localai.io/basics/getting_started/ (image tags differ by arch)
-
 volumes:
   localai_models:

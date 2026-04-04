@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+
 _identity: contextvars.ContextVar[tuple[int, int] | None] = contextvars.ContextVar(
     "agent_identity", default=None
 )

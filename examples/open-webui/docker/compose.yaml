@@ -16,10 +16,8 @@ services:
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
     networks:
       - ai-net
-
 volumes:
   open_webui_data:
-
 networks:
   ai-net:
     external: true

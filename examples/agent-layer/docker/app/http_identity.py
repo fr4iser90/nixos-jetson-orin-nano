@@ -17,7 +17,11 @@ def resolve_user_tenant(request: Request) -> tuple[int, int]:
             break
     raw_tenant = request.headers.get(config.TENANT_ID_HEADER)
     try:
-        tenant_hdr = int(str(raw_tenant).strip()) if raw_tenant and str(raw_tenant).strip() else 1
+        tenant_hdr = (
+            int(str(raw_tenant).strip())
+            if raw_tenant and str(raw_tenant).strip()
+            else 1
+        )
     except (TypeError, ValueError):
         tenant_hdr = 1
     if tenant_hdr < 1:

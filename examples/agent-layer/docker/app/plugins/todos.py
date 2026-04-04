@@ -29,8 +29,12 @@ def list_todos(arguments: dict[str, Any]) -> str:
                 "id": row["id"],
                 "title": row["title"],
                 "status": row["status"],
-                "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
-                "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+                "created_at": (
+                    row["created_at"].isoformat() if row.get("created_at") else None
+                ),
+                "updated_at": (
+                    row["updated_at"].isoformat() if row.get("updated_at") else None
+                ),
             }
         )
     return json.dumps({"ok": True, "todos": out})

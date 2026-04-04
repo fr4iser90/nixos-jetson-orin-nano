@@ -32,7 +32,9 @@ def kb_search_notes(arguments: dict[str, Any]) -> str:
     except (TypeError, ValueError):
         limit = 20
     rows = db.kb_note_search(q, limit)
-    return json.dumps({"ok": True, "notes": rows, "count": len(rows)}, ensure_ascii=False)
+    return json.dumps(
+        {"ok": True, "notes": rows, "count": len(rows)}, ensure_ascii=False
+    )
 
 
 def kb_read_note(arguments: dict[str, Any]) -> str:

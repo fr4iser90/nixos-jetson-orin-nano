@@ -399,7 +399,9 @@ def _fetch_page_text_respecting_robots(
         if not body:
             return "empty_body", None
         html = body.decode("utf-8", errors="replace")
-        if _env_bool("AGENT_RESPECT_META_ROBOTS", True) and _html_meta_robots_noindex(html):
+        if _env_bool("AGENT_RESPECT_META_ROBOTS", True) and _html_meta_robots_noindex(
+            html
+        ):
             return "meta_robots_noindex", None
         text = _html_to_text(html)
         if not text.strip():
@@ -517,7 +519,9 @@ def deep_search(arguments: dict[str, Any]) -> str:
     if not query:
         return json.dumps({"ok": False, "error": "query is empty"})
     max_results = _clamp_results(arguments.get("max_results"), 5, 10)
-    max_chars = _clamp_results(arguments.get("max_chars_per_source"), _max_raw_chars(), hi=50000)
+    max_chars = _clamp_results(
+        arguments.get("max_chars_per_source"), _max_raw_chars(), hi=50000
+    )
 
     tavily_err: str | None = None
     if os.environ.get("TAVILY_API_KEY", "").strip():
@@ -643,7 +647,10 @@ TOOLS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Research question or keywords"},
+                    "query": {
+                        "type": "string",
+                        "description": "Research question or keywords",
+                    },
                     "max_results": {
                         "type": "integer",
                         "description": "Max sources (1–10, default 5)",

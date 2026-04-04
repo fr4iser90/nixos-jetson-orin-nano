@@ -22,6 +22,7 @@
         imports = [
           "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-minimal.nix"
           self.nixosModules.default
+          ./modules/installer-orin-nano-helper.nix
         ];
         # Avoids a bunch of extra modules we don't have in the tegra_defconfig, like "ata_piix",
         hardware.enableAllHardware = lib.mkForce false;

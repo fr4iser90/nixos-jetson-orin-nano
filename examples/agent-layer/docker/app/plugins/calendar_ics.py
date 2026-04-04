@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import re
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
@@ -13,10 +14,14 @@ from urllib.parse import urlparse
 import httpx
 from icalendar import Calendar
 
+from .. import config
 from .. import db
 from .. import identity
+from .. import secret_otp_bundle
 
-__version__ = "1.1.1"
+logger = logging.getLogger(__name__)
+
+__version__ = "1.2.0"
 PLUGIN_ID = "calendar_ics"
 
 # Try Google-specific key first (same JSON shape), then generic ICS.
@@ -95,7 +100,7 @@ def _ics_url_for_user() -> str | dict[str, Any]:
             ),
             "nextcloud_setup_de": (
                 "Nextcloud: Kalender öffnen → Teilen / Link zum Abonnieren → HTTPS-ICS-URL; "
-                "als calendar_ics mit {\"ics_url\":\"…\"} speichern."
+                'als calendar_ics mit {"ics_url":"…"} speichern.'
             ),
         }
     ok, reason = _url_host_safe(url)
@@ -189,7 +194,27 @@ def calendar_ics_list_events(arguments: dict[str, Any]) -> str:
 
     url_or_err = _ics_url_for_user()
     if isinstance(url_or_err, dict):
-        return json.dumps(url_or_err, ensure_ascii=False)
+        err: dict[str, Any] = dict(url_or_err)
+        if config.SECRETS_MASTER_KEY:
+            try:
+                err["otp_registration"] = secret_otp_bundle.build_otp_curl_payload(
+                    "google_calendar", 600
+                )
+                err["one_shot_registration_de"] = (
+                    "Noch kein Kalender-Secret: **kein zweiter Tool-Call nötig.** "
+                    "Der Nutzer verwendet `otp_registration` → `curl_bash` oder `jq_register_example_de` "
+                    "aus **dieser** Tool-Antwort (eine Zeile, lokal ausführen, echte iCal-URL einsetzen, nie in den Chat). "
+                    "Nach `stored:true` erneut `calendar_ics_list_events` aufrufen. "
+                    "Entspricht demselben OTP-Flow wie `register_secrets` mit service_key **google_calendar**."
+                )
+            except Exception:
+                logger.exception("calendar: failed to attach otp_registration bundle")
+        else:
+            err["otp_registration_unavailable_de"] = (
+                "OTP-Einbettung aus: Betreiber muss AGENT_SECRETS_MASTER_KEY setzen. "
+                "Sonst manuell Tool register_secrets mit service_key_example google_calendar."
+            )
+        return json.dumps(err, ensure_ascii=False)
     url = url_or_err
 
     days_ahead = _int_arg(arguments, "days_ahead", 14)
@@ -218,9 +243,13 @@ def calendar_ics_list_events(arguments: dict[str, Any]) -> str:
 
     try:
         with httpx.Client(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
-            r = client.get(url, headers={"User-Agent": "jetpack-agent-layer-calendar/1.0"})
+            r = client.get(
+                url, headers={"User-Agent": "jetpack-agent-layer-calendar/1.0"}
+            )
     except httpx.HTTPError as e:
-        return json.dumps({"ok": False, "error": f"fetch failed: {e}"}, ensure_ascii=False)
+        return json.dumps(
+            {"ok": False, "error": f"fetch failed: {e}"}, ensure_ascii=False
+        )
 
     if r.status_code >= 400:
         return json.dumps(
@@ -237,7 +266,9 @@ def calendar_ics_list_events(arguments: dict[str, Any]) -> str:
         text = raw_bytes.decode("utf-8", errors="replace")
         cal = Calendar.from_ical(text)
     except Exception as e:
-        return json.dumps({"ok": False, "error": f"parse ics failed: {e}"}, ensure_ascii=False)
+        return json.dumps(
+            {"ok": False, "error": f"parse ics failed: {e}"}, ensure_ascii=False
+        )
 
     events_out: list[dict[str, Any]] = []
     for comp in cal.walk():
@@ -285,9 +316,7 @@ def calendar_ics_list_events(arguments: dict[str, Any]) -> str:
     out: dict[str, Any] = {
         "ok": True,
         "source_hint": (
-            "google_ical"
-            if "calendar.google.com" in url.lower()
-            else "ics_url"
+            "google_ical" if "calendar.google.com" in url.lower() else "ics_url"
         ),
         "window": {
             "from": win_start.isoformat(),
@@ -320,11 +349,9 @@ TOOLS: list[dict[str, Any]] = [
             "name": "calendar_ics_list_events",
             "description": (
                 "List calendar events from the user's secret ICS/iCal HTTPS URL. "
-                "Google: service_key **google_calendar** (or calendar_ics) with JSON "
-                '{"ics_url":"https://calendar.google.com/calendar/ical/.../basic.ics"} '
-                "from Google Calendar settings → secret iCal address. "
-                "Use months_ahead (e.g. 3–6) for multi-month overview; response includes by_month summary. "
-                "Read-only; register via register_secrets + OTP."
+                "If no secret is stored yet, the response still includes otp_registration (curl_bash / jq) "
+                "for service_key google_calendar — same OTP flow as register_secrets; user runs curl locally once, then call this tool again. "
+                "Google: secret iCal URL from Calendar settings. Use months_ahead for multi-month overview; optional by_month. Read-only."
             ),
             "parameters": {
                 "type": "object",

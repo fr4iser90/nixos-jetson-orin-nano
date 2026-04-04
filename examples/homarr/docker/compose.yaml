@@ -10,6 +10,5 @@ services:
       - homarr_data:/appdata
     environment:
       - TZ=UTC
-
 volumes:
   homarr_data:

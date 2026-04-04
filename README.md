@@ -58,6 +58,14 @@ sudo dd if=./result/iso/nixos-22.11pre-git-aarch64-linux.iso of=/dev/sdX bs=1M o
 
 As an alternative, you could also try the generic ARM64 multiplatform ISO from NixOS. See https://nixos.wiki/wiki/NixOS_on_ARM/UEFI
 
+### Orin Nano Super: template + guided install (flakes)
+
+The minimal installer ISO from this flake includes **`prepare-orin-nano-super-disk`** (optional wipe + GPT EFI/ext4 + mount `/mnt`, or print manual steps if you decline) and **`install-orin-nano-super`**. Typical order: `sudo prepare-orin-nano-super-disk` → `sudo nixos-generate-config --root /mnt` → `sudo install-orin-nano-super` → `sudo nixos-install --root /mnt --flake /mnt/etc/nixos#nixos`.
+
+Static copies of the same files live in [`templates/orin-nano-super/`](./templates/orin-nano-super/) (and on the live system under `/etc/orin-nano-super-template/`). See that directory’s `README.md` for manual copy instructions.
+
+Docker-centric stacks live under [`examples/`](./examples/); each `*/docker/start.sh` runs Compose for that stack.
+
 ### Installing NixOS
 
 Insert the USB drive into the Jetson device.
