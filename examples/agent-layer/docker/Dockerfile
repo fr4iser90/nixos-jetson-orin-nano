@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
-COPY agent_tools ./agent_tools
+COPY tools ./tools
 COPY control-panel ./control-panel
 
 ENV PYTHONUNBUFFERED=1

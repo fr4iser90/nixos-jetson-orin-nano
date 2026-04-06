@@ -71,7 +71,7 @@ def _stable_module_slug(directory: Path, path: Path, dir_idx: int) -> str:
 
 
 class ToolRegistry:
-    """Scans ``AGENT_TOOL_DIRS`` or default ``agent_tools`` + optional extra mount."""
+    """Scans ``AGENT_TOOL_DIRS`` or default ``tools`` + optional extra mount."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -104,7 +104,7 @@ class ToolRegistry:
 
             dirs = config.tool_scan_directories()
             if not dirs:
-                logger.warning("no tool directories to scan (set AGENT_TOOL_DIRS or ship agent_tools)")
+                logger.warning("no tool directories to scan (set AGENT_TOOL_DIRS or ship tools)")
 
             for dir_idx, directory in enumerate(dirs):
                 if not directory.is_dir():

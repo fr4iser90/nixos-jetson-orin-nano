@@ -7,7 +7,7 @@ OpenAI-kompatible API (FastAPI) vor **Ollama**: führt **Tool Calls** lokal aus 
 ```text
 Open WebUI / curl  →  agent-layer:8080/v1  →  Ollama :11434
                             │
-                            ├─ Tools (agent_tools/, optional extra dir)
+                            ├─ Tools (tools/, optional extra dir)
                             └─ PostgreSQL (Todos, tool_invocations)
 ```
 
@@ -76,7 +76,7 @@ Weitere Variablen: siehe `docker/.env.example` (`OLLAMA_BASE_URL`, `AGENT_HTTP_P
 
 ## Tools
 
-- **Laden:** Die Registry scannt Tool-Wurzeln **rekursiv** nach `*.py`. Im Image sind Module unter **`agent_tools/`** nach Layer gruppiert (`core/`, `knowledge/`, `external/`, `productivity/`, `domains/`). Standard-Wurzel: `agent_tools` im Image, optional `AGENT_TOOLS_EXTRA_DIR`. Mit **`AGENT_TOOL_DIRS`** (Komma-Liste) steuerst du die Wurzeln selbst. `tools_meta` kann pro Modul **`layer`** (aus dem ersten Pfadsegment) und optional **`tags`** (`TOOL_TAGS` im Modul) enthalten — Basis für späteres Filtern bei sehr vielen Tools.
+- **Laden:** Die Registry scannt Tool-Wurzeln **rekursiv** nach `*.py`. Im Image sind Module unter **`tools/`** nach Layer gruppiert (`core/`, `knowledge/`, `external/`, `productivity/`, `domains/`). Standard-Wurzel: `tools` im Image, optional `AGENT_TOOLS_EXTRA_DIR`. Mit **`AGENT_TOOL_DIRS`** (Komma-Liste) steuerst du die Wurzeln selbst. `tools_meta` kann pro Modul **`layer`** (aus dem ersten Pfadsegment) und optional **`tags`** (`TOOL_TAGS` im Modul) enthalten — Basis für späteres Filtern bei sehr vielen Tools.
 - **Pro Datei:** `TOOLS` + `HANDLERS`, optional `TOOL_ID`, `__version__` — siehe [TOOLS.md](./TOOLS.md).
 - **Reload:** `POST /v1/admin/reload-tools` (mit `AGENT_API_KEY`, falls gesetzt) — voller Rescan aller konfigurierten Verzeichnisse.
 

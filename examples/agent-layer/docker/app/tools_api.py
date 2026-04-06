@@ -86,7 +86,7 @@ async def admin_create_tool(request: Request):
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="JSON object expected")
 
-    from agent_tools.core.tool_factory.create_tool import create_tool as run_create_tool
+    from tools.agent.core.tool_factory.create_tool import create_tool as run_create_tool
 
     raw = run_create_tool(body)
     try:

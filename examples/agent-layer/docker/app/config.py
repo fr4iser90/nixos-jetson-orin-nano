@@ -111,7 +111,7 @@ def tool_scan_directories() -> list[Path]:
     """
     Tool **roots** to scan **recursively** for ``*.py`` (TOOLS + HANDLERS), including subfolders.
     If ``AGENT_TOOL_DIRS`` is set (comma-separated), only those paths are used (must exist).
-    Otherwise: shipped ``agent_tools`` tree (sibling of the ``app`` package), then ``AGENT_TOOLS_EXTRA_DIR`` if set.
+    Otherwise: shipped ``tools`` tree (sibling of the ``app`` package), then ``AGENT_TOOLS_EXTRA_DIR`` if set.
     Earlier roots / lexicographically earlier paths win when two files define the same tool name.
     """
     out: list[Path] = []
@@ -136,8 +136,8 @@ def tool_scan_directories() -> list[Path]:
             add(Path(part.strip()).expanduser())
         return out
 
-    # Repo layout: examples/agent-layer/docker/{app,agent_tools}; image WORKDIR /app.
-    add(Path(__file__).resolve().parent.parent / "agent_tools")
+    # Repo layout: examples/agent-layer/docker/{app,tools}; image WORKDIR /app.
+    add(Path(__file__).resolve().parent.parent / "tools")
     if TOOLS_EXTRA_DIR:
         add(Path(TOOLS_EXTRA_DIR).expanduser())
     return out
