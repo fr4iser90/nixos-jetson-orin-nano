@@ -11,6 +11,7 @@ import hashlib
 import logging
 import feedparser
 import asyncio
+from pathlib import Path
 from datetime import datetime
 from typing import Any
 
@@ -135,9 +136,16 @@ def daily_rss_summary(arguments: dict[str, Any]) -> str:
 
     # TODO: Send via email, save as file, send webhook
 
+    # Write report to file
+    report_path = Path(__file__).parent / "output" / "daily-summary.md"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(report, encoding="utf-8")
+    logger.info(f"Written markdown report to: {report_path.resolve()}")
+
     return json.dumps({
         "ok": True,
         "new_articles": len(new_articles),
+        "report_file": str(report_path),
         "report": report
     }, ensure_ascii=False)
 
